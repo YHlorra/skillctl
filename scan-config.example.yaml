@@ -1,0 +1,52 @@
+# Skill Manager - Scan Configuration Example
+#
+# This file is the TEMPLATE for your personal scan-config.yaml.
+# skillctl does NOT commit a usable scan-config.yaml — every operator's
+# library path is different, so each user maintains their own.
+#
+# Where this file lives:
+#   <skillctl_root>/scan-config.yaml       (read by `skillctl scan`)
+#
+# How to populate:
+#   1. Copy this file to scan-config.yaml in the skillctl project root.
+#   2. Replace each path below with the actual path on YOUR machine.
+#   3. Use forward slashes (works on Windows + POSIX). Path objects accept both.
+#   4. Save. Run `skillctl scan --config scan-config.yaml` to verify.
+#
+# Alternative: skip scan-config.yaml entirely and set SKILL_LIBRARY_PATH
+# in your shell environment. See references/user-config.md for the full
+# resolution chain (env > user.json > scan-config.yaml > built-in default).
+
+# Library root — all skills you want `skillctl` to manage.
+# This is what `skillctl install <url>`, `skillctl update --repos`, and
+# `skillctl list` operate on by default.
+canonical_path: ~/skills
+
+# Directories to scan for skills. Each entry is a real (non-symlink)
+# directory containing skill subfolders, each of which has a SKILL.md.
+scan_paths:
+  # Your canonical library (usually == canonical_path above)
+  - path: ~/skills
+    scope: global
+    priority: high
+    auto_detect_nested: true
+
+  # Agent-global skill dirs that you want indexed too
+  # (these usually symlink to ~/skills; auto_detect_nested handles either way)
+  # - path: ~/.claude/skills
+  #   scope: global
+  #   priority: high
+  #   auto_detect_nested: true
+
+  # Other agent runtimes you want indexed
+  # - path: ~/.trae/skills
+  #   scope: global
+  #   priority: medium
+  # - path: ~/.config/opencode/skills
+  #   scope: global
+  #   priority: low
+
+  # Project-level skills (per-project overrides)
+  # - path: ~/projects/myapp/.claude/skills
+  #   scope: project
+  #   priority: high

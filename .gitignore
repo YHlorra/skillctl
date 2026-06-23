@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.cache
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# skillctl runtime state (per-machine, never commit)
+.skillctl/
+.skillctl-backup/
+.skill-adopt-backup/
+.omc/
+index.json
+results.tsv
+state.json
+
+# Per-user configuration (never commit — see references/user-config.md)
+scan-config.yaml
+.canonical_path
+user.json
+
+# Backups & temp
+*.bak
+*.tmp
+*.log
+*.orig
+*.rej
+
+# Local development artifacts (never commit upstream — see references/recipes.md)
+agents.md
+analyze_dup.py
+decisions.json
+index_pm.json
+SCAN_REPORT_*.md
+skill-manager.link
+*.link
+.skill_id

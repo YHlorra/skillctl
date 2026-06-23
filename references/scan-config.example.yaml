@@ -1,0 +1,59 @@
+# Skill Manager - Scan Configuration Example
+
+# 要扫描的目录列表
+scan_paths:
+  # 全局 skill 目录（用户级）
+  - path: ~/.claude/skills
+    scope: global          # global | local | project
+    priority: high         # high | medium | low
+
+  # 项目本地 skill 目录
+  - path: ./skills
+    scope: local
+    priority: high
+
+  # 可添加更多扫描路径
+  # - path: /path/to/other/skills
+  #   scope: local
+  #   priority: low
+
+# 收集目标目录
+# skill 被收集到这个目录，原始位置创建 symlink
+collection_target: ~/.claude/skills-managed
+
+# 去重策略
+deduplicate:
+  # 默认冲突解决策略
+  #   ask     - 交互式询问用户（默认）
+  #   global  - 优先保留全局目录 (~/.claude) 的版本
+  #   local   - 优先保留项目本地版本
+  #   newest  - 保留最新修改的版本
+  default_strategy: ask
+
+  # 同名 skill 冲突时，保留最近修改的版本
+  keep_newest: true
+
+  # 是否自动解析 symlink-only 冲突（不提示用户）
+  auto_resolve_symlinks: true
+
+# Symlink 行为
+symlink:
+  # 全局 skill 作为 symlink 源（即全局可用的 skill 放在一个中心位置）
+  prefer_global: true
+
+  # 创建 symlink 前备份原始目录
+  backup_original: true
+
+  # 备份存储位置
+  backup_dir: ~/.skill-manager/backups
+
+# Git 行为
+git:
+  # 每个 skill 保留独立 git 仓库
+  preserve_per_skill: true
+
+  # 回滚前自动创建备份
+  auto_backup_on_rollback: true
+
+  # 备份存储位置
+  rollback_backup_dir: ~/.skill-manager/rollbacks
