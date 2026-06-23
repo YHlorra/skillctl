@@ -141,7 +141,7 @@ scenario, not by convenience:
    ```sh
    # Recommended: per-user, XDG-compliant
    mkdir -p ~/.config/skillctl
-   echo '{"library_path": "E:\\Desktop\\Skills"}' > ~/.config/skillctl/user.json
+   echo '{"library_path": "~/skills"}' > ~/.config/skillctl/user.json
 
    # Or: one-off env override
    export SKILL_LIBRARY_PATH="$HOME/skills"

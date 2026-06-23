@@ -106,18 +106,41 @@ def check_updates(skills):
     return results
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        # Default to standard Claude skills path if not provided
-        # Trying to guess typical Windows path for this user context
-        default_path = os.path.expanduser(r"~\.claude\skills")
-        # But we are in a tool env, let's use the provided one or current dir
-        if os.path.exists(r"C:\Users\20515\.claude\skills"):
-            target_dir = r"C:\Users\20515\.claude\skills"
-        else:
-            print("Usage: python scan_and_check.py <skills_dir>")
-            sys.exit(1)
-    else:
+    target_dir: str | None = None
+
+    if len(sys.argv) >= 2:
         target_dir = sys.argv[1]
+
+    if not target_dir:
+        # 1. SKILLCTL_AGENT_DIR env var
+        env_dir = os.environ.get("SKILLCTL_AGENT_DIR")
+        if env_dir:
+            target_dir = env_dir
+
+    if not target_dir:
+        # 2. user.json scan_paths[0] (or first global)
+        try:
+            from user_config import resolve_agent_skills_dir
+            resolved = resolve_agent_skills_dir()
+            if resolved is not None:
+                target_dir = str(resolved)
+        except ImportError:
+            pass
+
+    if not target_dir:
+        # 3. Generic default — same on every machine
+        target_dir = os.path.expanduser("~/.claude/skills")
+        print(
+            f"Warning: no SKILLCTL_AGENT_DIR or user.json configured; "
+            f"using generic default {target_dir}. "
+            f"See references/user-config.md to override.",
+            file=sys.stderr,
+        )
+
+    skills = scan_skills(target_dir)
+    updates = check_updates(skills)
+
+    print(json.dumps(updates, indent=2))
 
     skills = scan_skills(target_dir)
     updates = check_updates(skills)

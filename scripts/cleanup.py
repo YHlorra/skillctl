@@ -10,8 +10,14 @@ Skill Manager - Cleanup Module
 
 Usage:
     python cleanup.py --dry-run                    # 预览模式
-    python cleanup.py --scan-path E:\\Desktop\\Skills  # 扫描路径
+    python cleanup.py --scan-path <library_path>   # 扫描路径
     python cleanup.py --remove                      # 实际删除
+
+Path resolution for --scan-path:
+  1. --scan-path argument if provided
+  2. SKILL_LIBRARY_PATH env var
+  3. user.json library_path field
+  4. ERROR — refuse to run with no library configured
     python cleanup.py --json                         # JSON 输出
 """
 
@@ -337,7 +343,8 @@ def main():
     )
     parser.add_argument(
         "--scan-path", "-p", type=str,
-        help="Path to scan for cleanup candidates (default: E:\\Desktop\\Skills)"
+        help="Path to scan for cleanup candidates "
+             "(falls back to SKILL_LIBRARY_PATH env, then user.json library_path)"
     )
     parser.add_argument(
         "--remove", "-r", action="store_true",

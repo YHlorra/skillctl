@@ -165,7 +165,7 @@ def infer_github_url(skill_name, skill_dir, rate_remaining, rate_reset):
 # ─── Skill Scanning ────────────────────────────────────────────────────────────
 
 DEFAULT_SKILL_ROOTS = [
-    os.path.expanduser(r"~/.claude/skills"),
+    os.environ.get("SKILLCTL_AGENT_DIR") or os.path.expanduser("~/.claude/skills"),
 ]
 
 SKILL_MD_NAME = "SKILL.md"

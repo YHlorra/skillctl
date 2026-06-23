@@ -38,11 +38,18 @@ def get_canonical_path(config_path: Path = None) -> Path:
     """
     Get the canonical skill library path.
 
-    Priority:
-    1. SKILL_LIBRARY_PATH environment variable
-    2. .canonical_path file in skillctl directory
-    3. canonical_path in scan-config.yaml
-    4. Default: E:\\Desktop\\Skills
+    Resolution chain (first match wins):
+
+      1. ``SKILL_LIBRARY_PATH`` environment variable
+      2. ``user.json`` ``library_path`` field (via ``resolve_library_path``)
+      3. ``.canonical_path`` file in the skillctl directory (legacy)
+      4. ``canonical_path`` in scan-config.yaml (legacy)
+
+    If none of the above yields a usable path, the script exits with a
+    message pointing the operator at ``references/user-config.md``. There
+    is **no hard-coded default** — every operator's library is different
+    and silently falling back to a leaked Windows path is the bug this
+    function is designed to prevent.
     """
     # 1. Environment variable (highest priority)
     env_path = os.environ.get("SKILL_LIBRARY_PATH")
@@ -52,14 +59,24 @@ def get_canonical_path(config_path: Path = None) -> Path:
             print(f"Using canonical path from SKILL_LIBRARY_PATH: {path}")
             return path
 
+    # 2. user.json library_path (preferred over legacy .canonical_path file)
+    try:
+        from user_config import resolve_library_path
+        resolved = resolve_library_path()
+        if resolved is not None:
+            if resolved.exists() or resolved.parent.exists():
+                print(f"Using canonical path from user.json: {resolved}")
+                return resolved
+    except ImportError:
+        pass
+
     skillctl_dir = Path(__file__).parent.parent
 
-    # 2. .canonical_path file
+    # 3. .canonical_path file (legacy)
     canonical_file = skillctl_dir / ".canonical_path"
     if canonical_file.exists():
         try:
             lines = canonical_file.read_text().splitlines()
-            # Skip blank lines and comment lines
             for line in lines:
                 line = line.strip()
                 if line and not line.startswith("#"):
@@ -72,7 +89,7 @@ def get_canonical_path(config_path: Path = None) -> Path:
         except Exception:
             pass
 
-    # 3. Config file
+    # 4. Config file (legacy)
     if config_path and config_path.exists():
         try:
             with open(config_path, "r", encoding="utf-8") as f:
@@ -86,17 +103,23 @@ def get_canonical_path(config_path: Path = None) -> Path:
         except Exception:
             pass
 
-    # 4. Default
-    default_path = Path("E:\\Desktop\\Skills")
-    print(f"Using default canonical path: {default_path}")
-    return default_path
+    # 5. NO hard-coded default — refuse to guess
+    sys.exit(
+        "ERROR: Cannot determine skill library path.\n"
+        "  Configure one of:\n"
+        "    - env var SKILL_LIBRARY_PATH\n"
+        "    - user.json field 'library_path' (see references/user-config.md)\n"
+        "    - .canonical_path file in the skillctl directory (legacy)\n"
+        "    - 'canonical_path' in scan-config.yaml (legacy)\n"
+        "  See references/user-config.md for details."
+    )
 
 
 def is_symlink(path: Path) -> bool:
     r"""
     Check if path is a symlink, junction point, or has a symlink in its parent chain.
 
-    A path like C:\Users\.claude\skills\ljg-skills\skills\ljg-card
+    A path like <agent_skills_dir>/<wrapper>/skills/<skill>
     is effectively a symlink if any ancestor in its parent chain is a symlink.
     """
     try:

@@ -48,18 +48,52 @@ All fields are optional. Missing keys are silently treated as unset.
 
 ## Resolution order
 
-For `library_path` (the most-used field), scripts check sources in this
-order — first match wins:
+All path resolution follows a single, consistent pattern. For every
+"where is X" question, scripts check sources in this order — first
+match wins:
 
-1. `SKILL_LIBRARY_PATH` env var
-2. `user.json` `library_path` field
-3. Error: script exits with a message pointing here
+| Question | Env var | user.json field | Last-resort default |
+|---|---|---|---|
+| **Where is the skill library?** | `SKILL_LIBRARY_PATH` | `library_path` | **error** (refuse to run) |
+| **Where does the agent look for skills?** | `SKILLCTL_AGENT_DIR` | first `scan_paths` entry with `scope: global` | `~/.claude/skills` (generic, with warning) |
+| **Where is user.json itself?** | `SKILLCTL_USER_CONFIG` | n/a | XDG-compliant search |
 
 This order means:
 - CI / one-shot use: set the env var, no file needed.
 - Daily use: drop a `user.json` once, forget about it.
 - Fresh checkout: scripts refuse to run with a hard-coded Windows path;
   you must opt in.
+
+### The two paths and why both exist
+
+There are two paths in any `skillctl` setup:
+
+1. **The library** (`library_path`) — where skills physically live on
+   disk. The canonical, authoritative source.
+2. **The agent directory** (`scan_paths[scope=global]`) — where the
+   agent runtime looks for skills. Often filled with symlinks/junctions
+   into the library.
+
+They can be the same directory (a single-folder setup) or different
+(multi-machine, monorepo, or sandbox setups). Configuring them
+separately lets a CI job read from a read-only library while
+contributing to a writable agent dir, for example.
+
+### Code-level helpers
+
+`scripts/user_config.py` exposes three resolvers:
+
+```python
+from user_config import (
+    resolve_library_path,       # library_path chain
+    resolve_agent_skills_dir,   # agent dir chain
+    load_user_config,           # raw user.json dict
+)
+```
+
+Each returns `None` if nothing is configured. Callers should either
+treat that as an error (library) or fall back to a generic default
+with a warning (agent dir).
 
 ## How scripts use it
 
@@ -112,6 +146,21 @@ needing the env var.
    different and there is no safe default.
 4. **Environment override**: Power users and CI pipelines can skip
    the file entirely with `SKILL_LIBRARY_PATH`.
+
+## Other env vars skillctl honors
+
+| Env var | Purpose | Fallback |
+|---|---|---|
+| `SKILL_LIBRARY_PATH` | Canonical library root | `user.json:library_path` → error |
+| `SKILLCTL_AGENT_DIR` | Agent's skills dir (`~/.claude/skills` equivalent) | `user.json:scan_paths[0]` → generic `~/.claude/skills` |
+| `SKILLCTL_CANONICAL_PREFIX` | Prefix used by `dedup --strategy canonical` to prefer paths inside the library | `user.json:canonical_path` → first real location |
+| `SKILLCTL_USER_CONFIG` | Path to a non-standard `user.json` location | XDG-compliant search |
+| `SKILLCTL_ROOT` | skillctl project root (used by `skillctl.py` to find sibling scripts and config) | auto-detected from `__file__` |
+| `SKILLCTL_CONFIG` | Path to a non-standard `scan-config.yaml` | `<skillctl_root>/scan-config.yaml` |
+| `SKILLCTL_INDEX` | Path to a non-standard `index.json` | `<skillctl_root>/index.json` |
+| `SKILLCTL_SCRIPTS_DIR` | Path to the `scripts/` directory | auto-detected from `__file__` |
+
+All of these are gitignored or auto-detected; none are committed.
 
 ## Legacy: `scan-config.yaml` and `.canonical_path`
 

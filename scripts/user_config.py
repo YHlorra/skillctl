@@ -189,3 +189,41 @@ def resolve_library_path(env_var: str = "SKILL_LIBRARY_PATH") -> Optional[Path]:
         return Path(os.path.expandvars(os.path.expanduser(env_value)))
     cfg = load_user_config()
     return get_library_path(cfg)
+
+
+def resolve_agent_skills_dir(env_var: str = "SKILLCTL_AGENT_DIR") -> Optional[Path]:
+    """Resolve the agent skills directory (e.g. ``~/.claude/skills``).
+
+    This is the directory the agent runtime consults for skills. It is
+    distinct from the canonical *library* path (``resolve_library_path``):
+    the library is where skills physically live; the agent dir is where
+    the agent discovers them (often via symlinks/junctions into the
+    library).
+
+    Resolution chain (first match wins):
+
+        1. ``env_var`` env var (defaults to ``SKILLCTL_AGENT_DIR``)
+        2. ``user.json`` first entry in ``scan_paths`` whose ``scope``
+           is ``global`` (case-insensitive)
+        3. ``user.json`` first entry in ``scan_paths`` regardless of scope
+        4. ``None`` — caller should fall back to a generic default or
+           treat as an error
+
+    Returns ``None`` if no source is configured. Callers that want a
+    last-resort generic default should use
+    ``Path("~/.claude/skills").expanduser()`` explicitly and emit a
+    warning.
+    """
+    env_value = os.environ.get(env_var)
+    if env_value:
+        return Path(os.path.expandvars(os.path.expanduser(env_value)))
+    cfg = load_user_config()
+    paths = get_scan_paths(cfg)
+    # Prefer explicit "global" scope (the agent dir is usually global)
+    for entry in paths:
+        if entry.get("scope", "").lower() == "global":
+            return Path(entry["path"])
+    # Otherwise take the first scan path of any scope
+    if paths:
+        return Path(paths[0]["path"])
+    return None
