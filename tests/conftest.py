@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -67,7 +68,6 @@ def fake_source_repo(tmp_path) -> Path:
 
     The repo is a bare mirror so `git clone file://...` works.
     """
-    import textwrap
     work = tmp_path / "work"
     bare = tmp_path / "fake.git"
     work.mkdir()
@@ -108,6 +108,63 @@ def fake_source_repo(tmp_path) -> Path:
     )
 
     # Create bare mirror
+    subprocess.run(
+        ["git", "clone", "--bare", "--quiet", str(work), str(bare)],
+        check=True, capture_output=True,
+    )
+    return bare
+
+
+@pytest.fixture
+def broken_skill_repo(tmp_path) -> Path:
+    """A bare git repo with one clean skill and one broken skill.
+
+    - good-skill: passes validate --strict
+    - bad-skill: fails validate --strict (missing 'name' field)
+    """
+    work = tmp_path / "broken-work"
+    bare = tmp_path / "broken.git"
+    work.mkdir()
+
+    subprocess.run(["git", "init", "--quiet"], cwd=str(work), check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.invalid"],
+        cwd=str(work), check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=str(work), check=True, capture_output=True,
+    )
+
+    # Clean skill (passes gates)
+    good = work / "good-skill"
+    good.mkdir()
+    (good / "SKILL.md").write_text(
+        textwrap.dedent("""\
+            ---
+            name: good-skill
+            description: a clean skill that passes gate
+            ---
+            # good-skill
+            """),
+        encoding="utf-8",
+    )
+
+    # Broken skill (fails validate --strict: missing 'name')
+    bad = work / "bad-skill"
+    bad.mkdir()
+    (bad / "SKILL.md").write_text(
+        textwrap.dedent("""\
+            ---
+            description: broken skill with no name field
+            ---
+            # bad-skill
+            """),
+        encoding="utf-8",
+    )
+
+    subprocess.run(["git", "add", "-A"], cwd=str(work), check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init", "--quiet"], cwd=str(work), check=True, capture_output=True)
     subprocess.run(
         ["git", "clone", "--bare", "--quiet", str(work), str(bare)],
         check=True, capture_output=True,

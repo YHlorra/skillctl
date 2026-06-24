@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-skillctl v3.0 - 统一 CLI 入口
+skillctl v5.0 (mandatory 2-gate protocol) - 统一 CLI 入口
 
-包装 18 个离散 Python 脚本为单一 CLI。旧脚本一行不动。
+包装 14 个离散 Python 脚本为单一 CLI。旧脚本一行不动。
 详细设计见 ../DESIGN.md。
 """
 import argparse
@@ -35,21 +35,27 @@ COMMANDS = {
     "validate": "governance_validate.py",
     "cleanup":  "cleanup.py",
     "migrate":  "migrate_nested_to_main.py",
-    "library":  "skill_library.py",
     "rollback": "git_rollback.py",
     "score":    "score.py",
-    "map":      "map_skills.py",
-    "state":    "state.py",
-    "toggle":   "toggle.py",
-    "cull":       "cull.py",
-    "remediate":  "remediate.py",
     "status":   None,  # 内置：聚合
     "help":     None,  # 内置
+}
+
+# score sub-commands: sub_name → (script, args_builder(rest_args))
+# args_builder returns (prefix_args_to_inject, remaining_args_to_passthrough)
+SCORE_SUB = {
+    "track":          ("score_history.py", lambda r: (["--record"], r[1:])),
+    "trend":          ("score_history.py", lambda r: (
+        (["--trend", r[1]], r[2:]) if len(r) > 1 else (["--trend"], [])
+    )),
+    "regressions":    ("score_history.py", lambda r: (["--regressions"], r[1:])),
+    "history-report": ("score_history.py", lambda r: (["--report"], r[1:])),
 }
 
 # 透传给业务脚本的全局 flag（CLI 内部不消费，业务脚本 argparse 处理）
 PASSTHROUGH_FLAGS = {
     "--config", "--index", "--target", "--source", "--library",
+    "--gate-mode", "--no-gate", "--non-interactive",
     "--json", "--yes", "--dry-run", "--verbose", "--quiet",
     "--backup", "--rebuild-index", "--analyze", "--fetch", "--fix",
     "--skill", "--skills", "--path", "--scan-path", "--strategy",
@@ -118,6 +124,7 @@ def split_args(args: list[str]) -> tuple[list[str], list[str]]:
             if i + 1 < len(args) and not args[i + 1].startswith("--"):
                 # 仅当 flag 在 likely-with-value 集合里
                 if a in {"--config", "--index", "--target", "--source", "--library",
+                         "--gate-mode",
                          "--backup", "--skill", "--skills", "--path", "--scan-path",
                          "--strategy", "--to", "--format", "--output", "--filter",
                          "--threshold"}:
@@ -139,7 +146,7 @@ def cmd_init(args) -> int:
         state_file.write_text(
             json.dumps(
                 {
-                    "version": "4.0",
+                    "version": "5.0",
                     "created_at": datetime.now().isoformat(),
                     "skills": {},
                 },
@@ -160,7 +167,7 @@ def cmd_status(args) -> int:
     state_file = SKILLCTL_ROOT / ".omc" / "state" / "last-tool-error.json"
 
     out = {
-        "skillctl_version": "3.0",
+        "skillctl_version": "5.0",
         "config": str(cfg),
         "config_exists": cfg.exists(),
         "index": str(idx),
@@ -214,7 +221,7 @@ def cmd_help(args) -> int:
     """内置 help：列出所有命令 + 全局 flag"""
     import io
     out = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    print("skillctl v3.0 - 统一 CLI\n", file=out)
+    print("skillctl v5.0 - 统一 CLI\n", file=out)
     print("Usage: skillctl <command> [options]\n", file=out)
     print("Commands:", file=out)
     for cmd in COMMANDS:
@@ -275,6 +282,14 @@ def main(argv: list[str] = None) -> int:
         return cmd_init(rest)
     if cmd == "status":
         return cmd_status(rest)
+
+    # score sub-commands → score_history.py
+    if cmd == "score" and rest:
+        sub = rest[0]
+        if sub in SCORE_SUB:
+            sub_script, args_builder = SCORE_SUB[sub]
+            prefix_args, passthrough = args_builder(rest)
+            return run_script(sub_script, prefix_args + passthrough, verbose=verbose)
 
     # 业务命令：subprocess 透传
     script = COMMANDS[cmd]

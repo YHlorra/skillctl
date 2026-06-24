@@ -23,6 +23,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
+from _lib.gates import run_gates, format_report
+from _lib.tty import should_prompt_user, prompt_user_confirm
+
 from user_config import resolve_library_path
 _BASE_DIR_RESOLVED = resolve_library_path()
 if _BASE_DIR_RESOLVED is None:
@@ -76,12 +79,15 @@ def create_backup(path: Path) -> Path:
 class NestedRepoMigrator:
     """Migrate skills from nested Git repos to main library."""
 
-    def __init__(self, dry_run: bool = True):
+    def __init__(self, dry_run: bool = True, gate_mode: str = "enforce", non_interactive: bool = False):
         self.dry_run = dry_run
+        self.gate_mode = gate_mode
+        self.non_interactive = non_interactive
         self.index = load_index()
         self.nested_repos = self.index.get("nested_repos", [])
         self.migrated = []
         self.skipped = []
+        self.gated_out = []
         self.errors = []
 
     def migrate_all(self):
@@ -118,6 +124,15 @@ class NestedRepoMigrator:
 
             if self.dry_run:
                 for skill in skills:
+                    # Gate runs even in dry-run (for visibility)
+                    if self.gate_mode != "skip":
+                        report = run_gates(skill)
+                        print(format_report(report), end="")
+                        if not report.gates_passed:
+                            print(f"    Gate failure. Use --no-gate to override.")
+                            print(f"    Skip {skill.name}.")
+                            self.gated_out.append({"skill": skill.name, "repo": repo_path.name})
+                            continue
                     skill_path = BASE_DIR / skill.name
                     if skill_path.exists():
                         print(f"    [EXISTS] {skill.name}")
@@ -127,6 +142,23 @@ class NestedRepoMigrator:
 
             # Execute migration
             for skill in skills:
+                # Gate evaluation
+                if self.gate_mode != "skip":
+                    report = run_gates(skill)
+                    print(format_report(report), end="")
+                    if not report.gates_passed:
+                        print(f"    Gate failure. Use --no-gate to override.")
+                        print(f"    Skip {skill.name}.")
+                        self.gated_out.append({"skill": skill.name, "repo": repo_path.name})
+                        continue
+
+                # User confirmation
+                if should_prompt_user(self.non_interactive):
+                    if not prompt_user_confirm(f"Migrate {skill.name}?"):
+                        print(f"    Skipped {skill.name}.")
+                        self.skipped.append({"skill": skill.name, "repo": repo_path.name, "reason": "user declined"})
+                        continue
+
                 target_path = BASE_DIR / skill.name
                 skill_backup = None
 
@@ -174,9 +206,11 @@ class NestedRepoMigrator:
         return {
             "migrated": self.migrated,
             "skipped": self.skipped,
+            "gated_out": self.gated_out,
             "errors": self.errors,
             "total_migrated": len(self.migrated),
             "total_skipped": len(self.skipped),
+            "total_gated_out": len(self.gated_out),
             "total_errors": len(self.errors),
         }
 
@@ -193,22 +227,40 @@ def main():
         "--dry-run", "-n", action="store_true",
         help="Show what would be done without making changes"
     )
+    parser.add_argument(
+        "--gate-mode", type=str, choices=["enforce", "skip"], default="enforce",
+        help="Gate validation before migration: enforce (fail if gates don't pass) or skip (skip gates)"
+    )
+    parser.add_argument(
+        "--no-gate", action="store_true", default=False,
+        help="Skip gate validation (equivalent to --gate-mode skip)"
+    )
+    parser.add_argument(
+        "--non-interactive", action="store_true", default=False,
+        help="Auto-confirm migration without prompting"
+    )
 
     args = parser.parse_args()
 
     # Default to dry-run if neither execute nor dry-run specified
     dry_run = not args.execute
 
-    migrator = NestedRepoMigrator(dry_run=dry_run)
+    migrator = NestedRepoMigrator(
+        dry_run=dry_run,
+        gate_mode="skip" if args.no_gate else args.gate_mode,
+        non_interactive=args.non_interactive,
+    )
     results = migrator.migrate_all()
 
     # Print summary
     print(f"\n{'=' * 70}")
     print(f" Migration Summary")
     print(f"{'=' * 70}")
-    print(f"  Migrated: {results['total_migrated']}")
-    print(f"  Skipped: {results['total_skipped']}")
-    print(f"  Errors: {results['total_errors']}")
+    print(f"  Migrated:   {results['total_migrated']}")
+    if results.get("total_gated_out"):
+        print(f"  Gated out: {results['total_gated_out']}")
+    print(f"  Skipped:   {results['total_skipped']}")
+    print(f"  Errors:    {results['total_errors']}")
 
     if results["migrated"]:
         print(f"\nMigrated skills:")
@@ -223,6 +275,15 @@ def main():
     if dry_run:
         print(f"\n[DRY RUN] Use --execute to actually migrate.")
 
+    # Exit code: 4 if all candidates gated out; 1 on errors; 0 otherwise
+    # Dry-run always exits 0 (informational only, never a real failure)
+    if dry_run:
+        return 0
+    candidates = results["total_migrated"] + results["total_gated_out"]
+    if results["total_errors"] > 0:
+        return 1
+    if candidates > 0 and results["total_migrated"] == 0 and results["total_gated_out"] > 0:
+        return 4
     return 0
 
 

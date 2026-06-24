@@ -1,4 +1,4 @@
-# CLI 完整规范 (v3.0)
+# CLI 完整规范 (v5.0)
 
 ## 入口
 
@@ -17,8 +17,7 @@ skillctl <command> [options]
 | `--config PATH` | �?| scan-config.yaml 路径 |
 | `--index PATH` | �?| index.json 路径 |
 | `--target PATH` | �?| 链接目标目录（link 用）|
-| `--source PATH` | �?| 源目录（adopt 用）|
-| `--library PATH` | �?| library 根目录（adopt 用）|
+| `--library PATH` | �?| library 根目录（update --repos 用）|
 | `--path PATH` | �?| 扫描路径（list / cleanup 用）|
 | `--json` | �?| 强制 JSON 输出（仅 update/validate/status 支持；list 不支持）|
 | `--yes` | �?| 跳过交互确认 |
@@ -61,7 +60,7 @@ skillctl status
 聚合输出 JSON�?
 ```json
 {
-  "skillctl_version": "3.0",
+  "skillctl_version": "4.0",
   "config": "<skillctl_root>/scan-config.yaml",
   "config_exists": true,
   "index": "<skillctl_root>/index.json",
@@ -81,9 +80,10 @@ skillctl status
 
 ```bash
 skillctl scan --config scan-config.yaml [--rebuild-index]
+skillctl scan --enrich                              # GitHub API 推理 orphan skill 的 github_url
 ```
 
-�?`scan_and_index.py`。扫描多个目录，构建 `index.json`�?
+指向 `scan_and_index.py`。扫描多个目录，构建 `index.json`。`--enrich` 通过 GitHub API 推理 orphan skill 的 `github_url`（仅在 `--enrich` 时联网，默认关闭）。
 ### install
 
 ```bash
@@ -91,16 +91,21 @@ skillctl install <github-url>             # 克隆�?<library>/<repo-name>/ 保
 skillctl install <url> --reinstall        # 冲突时备份工作树�?in-place 刷新
 ```
 
-�?`scan_and_index.py --install`。把 GitHub 仓库克隆为带 `.git/` 的父 wrapper 目录，里面所�?`SKILL.md` 子目录随后由 `skillctl scan` 收进 index�?
-**flag �?*
+指向 `scan_and_index.py --install`。
+v5+ Gate 流程：克隆到临时目录 → Gate 1 validate --strict → Gate 2 score（信息性，永不阻止）→ 用户确认（--non-interactive 自动）→ 原子移动到库。
 
 | Flag | 说明 |
 |------|------|
-| `--reinstall` | 目标路径已存在时启用；备份现有工作树（不�?`.git/`）到 `<library>/.skillctl-backup/<ts>/<repo>/`，再 `git fetch && git reset --hard origin/HEAD` 原地刷新 |
+| `--reinstall` | 目标路径已存在时启用；备份现有工作树（不含 `.git/`）到 `<library>/.skillctl-backup/<ts>/<repo>/`，再 `git fetch && git reset --hard origin/HEAD` 原地刷新 |
+| `--gate-mode enforce|skip` | 默认 enforce；skip 跳过 2-gate 验证 |
+| `--no-gate` | 等效于 --gate-mode skip（带警告）|
+| `--non-interactive` | gate 通过后自动确认，不提示用户 |
 
 **已知限制**
 
-- 不支持带 submodules 的仓库（v1 限制�?- 备份不含 `.git/`（从 remote 可重新拉取，避免 Windows 文件锁问题）
+- 不支持带 submodules 的仓库（v1 限制）
+- 备份不含 `.git/`（从 remote 可重新拉取，避免 Windows 文件锁问题）
+
 
 ### list
 
@@ -113,11 +118,27 @@ skillctl list [--path <library>] [--filter NAME] [--info]
 ### adopt
 
 ```bash
-skillctl adopt --dry-run        # 预览
-skillctl adopt --yes --backup .skill-adopt-backup --rebuild-index
+skillctl adopt --dry-run                          # 预览
+skillctl adopt --source <dir> --library <dir>    # 指定源和目标
+skillctl adopt --yes --backup <dir> --rebuild-index  # 正式采纳
 ```
 
-�?`adopt_skills.py`。将 `~/.claude/skills/` 未托�?skill 复制�?library，替换为 junction�?
+指向 `adopt_skills.py`。发现源目录（默认 `~/.claude/skills/`）中未托管的 skill，复制到 library，再将源替换为 junction（Windows）或 symlink（Unix），指向 library 中的目标位置。
+v5+ Gate：每个 skill 在采纳前必须通过 2-gate 验证（validate --strict + score）。Gate 失败则跳过该 skill（不影响其他）。
+
+| Flag | 说明 |
+|------|------|
+| `--dry-run` | 预览模式，不执行任何移动/复制/链接操作 |
+| `--yes` | 跳过交互确认（v5：仅跳过 gate 后的确认，不跳过 gates 本身）|
+| `--non-interactive` | gate 通过后自动确认，不提示用户（CI / agent 用）|
+| `--no-gate` | 跳过 2-gate 验证（NOT 推荐）|
+| `--gate-mode enforce|skip` | 默认 enforce |
+| `--backup DIR` | 采纳前将原始源目录备份到此目录 |
+| `--rebuild-index` | 采纳完成后运行 scan 刷新 index.json |
+| `--source PATH` | 源目录（默认 `~/.claude/skills/`） |
+| `--library PATH` | 目标 library 根目录（默认 SKILL_LIBRARY_PATH 或 user.json） |
+
+
 ### link
 
 ```bash
@@ -175,21 +196,30 @@ skillctl migrate --dry-run
 skillctl migrate --execute
 ```
 
-�?`migrate_nested_to_main.py`。嵌�?Git repo �?skills 迁到主库�?
-### library
+指向 `migrate_nested_to_main.py`。嵌套 Git repo 中的 skills 迁到主库。
+v5+ Gate：每个嵌套 skill 在移动前必须通过 2-gate 验证。Gate 失败则跳过该 skill（不影响其他）。
 
-```bash
-skillctl library --help
-```
+| Flag | 说明 |
+|------|------|
+| `--dry-run` | 预览模式（gate 仍然运行以供查看）|
+| `--execute` | 实际执行迁移 |
+| `--non-interactive` | gate 通过后自动确认，不提示用户 |
+| `--no-gate` | 跳过 2-gate 验证（NOT 推荐）|
+| `--gate-mode enforce|skip` | 默认 enforce |
 
-�?`skill_library.py`。集中式 library 管理�?
+
 ### score
 
 ```bash
-skillctl score
+skillctl score                          # Darwin 8维评分
+skillctl score track                    # 记录当前分数到历史
+skillctl score trend <name>            # 显示 skill 评分趋势
+skillctl score regressions              # 列出分数下降的 skill
+skillctl score history-report           # 完整历史报告
 ```
 
-�?`score.py`。Darwin 评分（内部用）�?
+指向 `score.py`（评分）和 `score_history.py`（历史追踪）。
+`score` 本身运行 Darwin 评分；子命令路由到 `score_history.py` 的对应模式。
 ## 环境变量
 
 | 变量 | 作用 |
@@ -204,5 +234,7 @@ skillctl score
 
 - `0` 成功
 - `1` 业务错误
-- `2` CLI 参数错误（未知命�?/ 缺命令）
-- `127` 业务脚本不存�?
+- `2` CLI 参数错误（未知命令 / 缺命令）
+- `3` Gate 报告已输出，用户拒绝确认（仅交互模式）
+- `4` Gate 失败（install：任意 skill 未通过 gate；adopt/migrate：所有候选 skill 均未通过 gate）
+- `127` 业务脚本不存在

@@ -73,3 +73,6 @@ SCAN_REPORT_*.md
 skill-manager.link
 *.link
 .skill_id
+
+# Deepwork session state (per-machine orchestration scratch — never commit)
+.slim/

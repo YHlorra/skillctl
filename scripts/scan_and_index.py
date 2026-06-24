@@ -18,11 +18,16 @@ import yaml
 import subprocess
 import shutil
 import hashlib
+import time
+import re
+import tempfile
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional, List, Dict
 import argparse
-import urllib.request
+from urllib.parse import quote_plus
+from _lib.tty import should_prompt_user
+from _lib.gates import run_gates, format_report
 
 # Force UTF-8 encoding for stdout on Windows
 if hasattr(sys.stdout, "reconfigure"):
@@ -290,7 +295,7 @@ def get_git_info(skill_dir: Path) -> dict:
 
 
 def get_repo_info(url: str) -> dict:
-    """Fetch GitHub repo info (from fetch_github_info.py logic)."""
+    """Fetch GitHub repo info via git ls-remote."""
     clean_url = url.rstrip("/")
     if clean_url.endswith(".git"):
         clean_url = clean_url[:-4]
@@ -315,6 +320,124 @@ def get_repo_info(url: str) -> dict:
         "url": url,
         "latest_hash": latest_hash,
     }
+
+
+# ─── GitHub API (gated behind --enrich flag) ──────────────────────────────
+
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_HEADERS = {"Accept": "application/vnd.github.v3+json"}
+if GITHUB_TOKEN:
+    GITHUB_HEADERS["Authorization"] = f"token {GITHUB_TOKEN}"
+
+
+def github_api_get(url, params=None):
+    """GET request to GitHub API with rate limit handling."""
+    import urllib.request
+    import urllib.error
+
+    full_url = f"https://api.github.com{url}"
+    req = urllib.request.Request(full_url, headers=GITHUB_HEADERS)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            remaining = resp.headers.get("X-RateLimit-Remaining", "999")
+            reset_ts = resp.headers.get("X-RateLimit-Reset", "")
+            return data, int(remaining), int(reset_ts) if reset_ts else 0
+    except urllib.error.HTTPError as e:
+        if e.code == 403:
+            return None, 0, int(e.headers.get("X-RateLimit-Reset", 0))
+        return None, 0, 0
+    except Exception:
+        return None, 0, 0
+
+
+def wait_for_rate_limit(reset_ts):
+    """Wait if rate limited."""
+    if reset_ts > 0:
+        wait_sec = reset_ts - time.time()
+        if wait_sec > 0:
+            print(f"[Rate limited] Waiting {int(wait_sec) + 5}s...", file=sys.stderr)
+            time.sleep(wait_sec + 5)
+
+
+# Known patterns: (skill_prefix, search_query_suffix, confidence)
+KNOWN_PATTERNS = [
+    ("agent-reach", "agent-reach/agent-reach", 1.0),
+    ("x-tweet-fetcher", "skillcoder/x-tweet-fetcher", 0.8),
+    ("last30days", "skillcoder/last30days", 0.8),
+]
+
+# Known org prefixes and their GitHub org/repo patterns
+PREFIX_ORG_MAP = {
+    "baoyu": None,
+    "ljg": None,
+    "money": None,
+    "yao": "yao",
+}
+
+
+def infer_github_url(skill_name, skill_dir, rate_remaining, rate_reset):
+    """
+    Try to infer the GitHub URL for an orphan skill.
+    Returns (url, method, confidence) or (None, None, 0).
+    Only called when --enrich is set.
+    """
+    # 1. Check known patterns
+    for prefix, known_url, conf in KNOWN_PATTERNS:
+        if skill_name.startswith(prefix):
+            return f"https://github.com/{known_url}", f"known_pattern:{prefix}", conf
+
+    # 2. Try git remote if skill dir is a git repo
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=str(skill_dir),
+            capture_output=True,
+            text=True,
+            timeout=5,
+            windowsHide=True,
+        )
+        if result.returncode == 0:
+            remote_url = result.stdout.strip()
+            if remote_url.startswith("git@github.com:"):
+                remote_url = "https://github.com/" + remote_url[15:].replace(".git", "")
+            elif remote_url.startswith("https://github.com/"):
+                remote_url = remote_url.replace(".git", "")
+            if "github.com" in remote_url:
+                return remote_url, "git_remote", 1.0
+    except Exception:
+        pass
+
+    # 3. Try GitHub API search (if we have quota)
+    if rate_remaining > 5:
+        query = f"filename:SKILL.md {skill_name} in:path"
+        search_url = f"/search/code?q={quote_plus(query)}&per_page=5"
+        data, remaining, reset = github_api_get(search_url)
+        new_remaining = min(rate_remaining, remaining)
+        wait_for_rate_limit(reset)
+
+        if data and "items" in data and len(data["items"]) > 0:
+            item = data["items"][0]
+            repo_url = f"https://github.com/{item['repository']['full_name']}"
+            return repo_url, "github_api_search", 0.75
+
+        # Fallback: search repos by name
+        search_url2 = f"/search/repositories?q={quote_plus(skill_name)}+filename:SKILL.md&per_page=5"
+        data2, remaining2, reset2 = github_api_get(search_url2)
+        new_remaining = min(new_remaining, remaining2)
+        wait_for_rate_limit(reset2)
+
+        if data2 and "items" in data2 and len(data2["items"]) > 0:
+            item = data2["items"][0]
+            return (
+                f"https://github.com/{item['full_name']}",
+                "github_api_repo_search",
+                0.6,
+            )
+
+        return None, "not_found", 0
+    else:
+        return None, "rate_limited", 0
 
 
 def parse_skill_md(skill_md_path: Path) -> Optional[dict]:
@@ -679,32 +802,37 @@ def build_index(
 def install_from_github(
     repo_url: str,
     install_path: Path,
+    *,
     depth: int = 1,
     reinstall: bool = False,
     backup_dir: Optional[Path] = None,
-) -> dict:
+    gate_mode: str = "enforce",
+    no_gate: bool = False,
+    non_interactive: bool = False,
+) -> int:
     """
-    Clone a GitHub repo to install_path as a parent wrapper.
+    Clone a GitHub repo into the library, gated by validate + score.
 
-    The repo is cloned to <install_path>/<repo_name>/ with .git history
-    preserved, so the user can `git pull` later for updates.
+    Clone always goes to a temp dir first; only moves to the library
+    after gates pass (or are skipped).
 
-    Returns dict with:
-    - success: bool
-    - path: installed parent wrapper path
-    - error: error message if failed
-    - skills_detected: count of SKILL.md files inside the wrapper
-    - reinstalled: bool (True if existing dir was wiped and re-cloned)
-    - backup: backup path if reinstall wiped data
+    Args:
+        repo_url: GitHub repository URL.
+        install_path: Target library root.
+        depth: Git clone depth.
+        reinstall: Whether to allow overwriting an existing target.
+        backup_dir: Backup directory for reinstall.
+        gate_mode: "enforce" (run gates, abort on fail) or "skip".
+        no_gate: Alias for gate_mode="skip".
+        non_interactive: Auto-confirm after gates pass; fail if gates fail.
+
+    Returns:
+        Exit code: 0 = success, 1 = git/clone failure,
+                  3 = user declined (interactive only),
+                  4 = gate failure.
     """
-    result = {
-        "success": False,
-        "path": str(install_path),
-        "error": None,
-        "skills_detected": 0,
-        "reinstalled": False,
-        "backup": None,
-    }
+    if no_gate:
+        gate_mode = "skip"
 
     # Get repo name from URL
     clean_url = repo_url.rstrip("/")
@@ -712,103 +840,160 @@ def install_from_github(
         clean_url = clean_url[:-4]
     repo_name = clean_url.split("/")[-1]
 
-    # Full install path
+    # Full install path (collision check target)
     target_path = install_path / repo_name
 
-    # Collision detection: refuse / backup-and-overwrite
+    # Collision check
     if target_path.exists() and any(target_path.iterdir()):
         if not reinstall:
-            result["error"] = (
+            print(
                 f"Path exists and is not empty: {target_path}. "
-                f"Use --reinstall to overwrite (backs up to .skillctl-backup/)."
+                f"Use --reinstall to overwrite.",
+                file=sys.stderr,
             )
-            return result
-        # --reinstall path: backup working tree (skip .git/), then
-        # in-place refresh via `git fetch && git reset --hard origin/HEAD`.
-        # This avoids Windows file-lock issues when deleting .git/objects/pack/*.
-        if backup_dir is None:
-            backup_dir = install_path / ".skillctl-backup"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_path = backup_dir / f"{repo_name}_{timestamp}"
-        try:
-            shutil.copytree(
-                target_path,
-                backup_path,
-                symlinks=False,
-                ignore=shutil.ignore_patterns(".git"),
-            )
-            result["backup"] = str(backup_path)
-        except Exception as e:
-            result["error"] = f"Backup failed: {e}"
-            return result
+            return 1
+        # --reinstall: clone fresh from remote to temp, gate the NEW content.
+        # If gates pass -> backup old wrapper, remove it, move new clone into place.
+        # If gates fail  -> temp discarded, old wrapper untouched (return 4).
+        # This prevents malicious upstream content from bypassing gates.
 
-        # In-place refresh instead of rmtree + clone (Windows-friendly)
-        try:
-            fetch_proc = subprocess.run(
-                ["git", "-C", str(target_path), "fetch", "--all", "--prune"],
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            if fetch_proc.returncode != 0:
-                result["error"] = f"git fetch failed: {fetch_proc.stderr.strip()}"
-                return result
-            reset_proc = subprocess.run(
-                ["git", "-C", str(target_path), "reset", "--hard", "origin/HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            if reset_proc.returncode != 0:
-                result["error"] = f"git reset failed: {reset_proc.stderr.strip()}"
-                return result
-            result["reinstalled"] = True
-        except subprocess.TimeoutExpired:
-            result["error"] = "git fetch/reset timed out"
-            return result
-        except Exception as e:
-            result["error"] = f"Reinstall refresh failed: {e}"
-            return result
-
-        # Count skills after refresh (informational)
-        try:
-            result["skills_detected"] = sum(1 for _ in target_path.rglob("SKILL.md"))
-        except Exception:
-            pass
-
-        result["success"] = True
-        result["path"] = str(target_path)
-        return result
-
+    # ── Clone to temp dir ──────────────────────────────────────────────────────
     try:
-        # Clone with depth=1 for efficiency
-        proc = subprocess.run(
-            ["git", "clone", "--depth", str(depth), repo_url, str(target_path)],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if proc.returncode != 0:
-            result["error"] = proc.stderr
-            return result
+        with tempfile.TemporaryDirectory(prefix="skillctl-install-") as tmp:
+            tmp_repo_path = Path(tmp) / repo_name
+            proc = subprocess.run(
+                ["git", "clone", "--depth", str(depth), repo_url, str(tmp_repo_path)],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if proc.returncode != 0:
+                print(f"Clone failed: {proc.stderr.strip()}", file=sys.stderr)
+                return 1
 
-        result["success"] = True
-        result["path"] = str(target_path)
+            # ── Gate evaluation (on the freshly-cloned content) ───────────────
+            if gate_mode == "enforce":
+                # Find all skill subdirs in the clone
+                skill_dirs = []
+                for item in tmp_repo_path.iterdir():
+                    if item.is_dir() and not item.name.startswith("."):
+                        if (item / "SKILL.md").exists():
+                            skill_dirs.append(item)
+                        # Also check nested skills/ subdir pattern
+                        skills_sub = item / "skills"
+                        if skills_sub.is_dir():
+                            for nested in skills_sub.iterdir():
+                                if nested.is_dir() and (nested / "SKILL.md").exists():
+                                    skill_dirs.append(nested)
 
-        # Count SKILL.md files in the wrapper (informational only;
-        # the post-install 'skillctl scan' is what populates index.json)
-        try:
-            result["skills_detected"] = sum(1 for _ in target_path.rglob("SKILL.md"))
-        except Exception:
-            pass
+                if not skill_dirs:
+                    print(
+                        f"No skills found in {repo_url} — still installing (repo may be empty)."
+                    )
+                else:
+                    all_passed = True
+                    for skill_dir in skill_dirs:
+                        report = run_gates(skill_dir)
+                        print(format_report(report))
+                        if not report.gates_passed:
+                            all_passed = False
+                            print(
+                                f"Gate failure for {skill_dir.name}. "
+                                "Use --no-gate to override (not recommended)."
+                            )
+
+                    if not all_passed:
+                        return 4  # gate failure
+
+            # ── User confirmation ────────────────────────────────────────────
+            if not should_prompt_user(non_interactive):
+                pass  # auto-confirm
+            else:
+                print("\n[install] About to install the above skills. Ctrl-C to abort, Enter to confirm...")
+                try:
+                    input()
+                except (KeyboardInterrupt, EOFError):
+                    print("\nAborted.")
+                    return 3
+
+            # ── Install to library ─────────────────────────────────────────
+            if target_path.exists():
+                # Reinstall: backup old working tree, then refresh in-place.
+                # NOTE: we do NOT shutil.rmtree the wrapper — that would lock on
+                # .git/pack/* on Windows. Instead we git clean -fdx + git reset --hard
+                # to replace working tree content while preserving .git/.
+                if backup_dir is None:
+                    backup_dir = install_path / ".skillctl-backup"
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_path = backup_dir / f"{repo_name}_{ts}"
+                shutil.copytree(
+                    target_path,
+                    backup_path,
+                    symlinks=False,
+                    ignore=shutil.ignore_patterns(".git"),
+                )
+                print(f"[install] Backup: {backup_path}")
+                # Refresh existing wrapper in-place (avoids Windows .git/ lock)
+                try:
+                    clean_proc = subprocess.run(
+                        ["git", "-C", str(tmp_repo_path), "clean", "-fdx"],
+                        capture_output=True, text=True, timeout=60,
+                    )
+                    if clean_proc.returncode != 0:
+                        print(f"git clean failed: {clean_proc.stderr.strip()}", file=sys.stderr)
+                        return 1
+                    fetch_proc = subprocess.run(
+                        ["git", "-C", str(tmp_repo_path), "fetch", "--all", "--prune"],
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    if fetch_proc.returncode != 0:
+                        print(f"git fetch failed: {fetch_proc.stderr.strip()}", file=sys.stderr)
+                        return 1
+                    reset_proc = subprocess.run(
+                        ["git", "-C", str(tmp_repo_path), "reset", "--hard", "origin/HEAD"],
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    if reset_proc.returncode != 0:
+                        print(f"git reset failed: {reset_proc.stderr.strip()}", file=sys.stderr)
+                        return 1
+                    # Now copy the refreshed content over the existing wrapper
+                    # (the .git/ dir is preserved; only working tree files change)
+                    for item in tmp_repo_path.iterdir():
+                        if item.name == ".git":
+                            continue
+                        dst_item = target_path / item.name
+                        if dst_item.exists():
+                            if dst_item.is_dir():
+                                shutil.rmtree(dst_item)
+                            else:
+                                dst_item.unlink()
+                        if item.is_dir():
+                            shutil.copytree(item, dst_item, symlinks=False)
+                        else:
+                            shutil.copy2(item, dst_item)
+                    print(f"[install] Refreshed existing target: {target_path}")
+                except subprocess.TimeoutExpired:
+                    print("git operation timed out.", file=sys.stderr)
+                    return 1
+                except Exception as e:
+                    print(f"Reinstall failed: {e}", file=sys.stderr)
+                    return 1
+            else:
+                shutil.move(str(tmp_repo_path), str(target_path))
+                print(f"[install] Installed to: {target_path}")
+
+            skills_detected = sum(1 for _ in target_path.rglob("SKILL.md"))
+            if skills_detected:
+                print(f"  Detected {skills_detected} SKILL.md file(s).")
+            return 0
 
     except subprocess.TimeoutExpired:
-        result["error"] = "Clone timed out"
+        print("Clone timed out.", file=sys.stderr)
+        return 1
     except Exception as e:
-        result["error"] = str(e)
-
-    return result
+        print(f"Install failed: {e}", file=sys.stderr)
+        return 1
 
 
 class DateTimeEncoder(json.JSONEncoder):
@@ -877,6 +1062,29 @@ def main():
         default=True,
         help="Track skill file hash for freshness detection (default: true)",
     )
+    parser.add_argument(
+        "--enrich",
+        action="store_true",
+        help="After scan, infer github_url for orphan skills via GitHub API. "
+             "WARNING: makes network requests (default: off)",
+    )
+    parser.add_argument(
+        "--gate-mode",
+        choices=["enforce", "skip"],
+        default="enforce",
+        help="Gate enforcement mode (default: enforce). "
+             "'skip' bypasses validate+score gates (not recommended).",
+    )
+    parser.add_argument(
+        "--no-gate",
+        action="store_true",
+        help="Skip validate and score gates entirely. WARN: bypasses safety checks.",
+    )
+    parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Auto-confirm after gates pass; fail if gates fail. For CI/agents.",
+    )
 
     args = parser.parse_args()
 
@@ -890,21 +1098,17 @@ def main():
         install_path = canonical
         print(f"Installing to canonical path: {install_path}")
 
-        result = install_from_github(args.install, install_path, reinstall=args.reinstall)
-        if result["success"]:
-            print(f"✓ Installed to: {result['path']}")
-            if result["skills_detected"]:
-                print(
-                    f"  Detected {result['skills_detected']} SKILL.md file(s) inside the wrapper."
-                )
-            if result.get("backup"):
-                print(f"  Previous content backed up to: {result['backup']}")
+        exit_code = install_from_github(
+            args.install,
+            install_path,
+            reinstall=args.reinstall,
+            gate_mode=args.gate_mode,
+            no_gate=args.no_gate,
+            non_interactive=args.non_interactive,
+        )
+        if exit_code == 0:
             print("  Run 'skillctl scan' to refresh index.json with the new skills.")
-        else:
-            print(f"✗ Install failed: {result['error']}")
-            return 1
-        # After install, re-scan
-        args.no_auto_nested = True  # Don't auto-detect on fresh install
+        return exit_code
 
     # Determine scan paths
     auto_detect_nested = not args.no_auto_nested
@@ -959,6 +1163,44 @@ def main():
 
     # Build index
     index = build_index(scan_paths, auto_detect_nested=auto_detect_nested)
+
+    # Enrichment: only runs when --enrich is set (zero network by default)
+    if args.enrich:
+        print("\n=== Enrichment (--enrich) ===")
+        skills = index.get("skills", {})
+        enriched = 0
+        rate_remaining = 999
+        rate_reset = 0
+        for skill_name, skill_data in skills.items():
+            meta = skill_data.get("metadata", {})
+            if meta.get("github_url"):
+                continue  # Already has github_url, skip
+            # Find the first real path for this skill
+            locations = skill_data.get("locations", [])
+            real_loc = next(
+                (l for l in locations if not l.get("is_symlink")),
+                locations[0] if locations else None,
+            )
+            if not real_loc:
+                continue
+            skill_dir = Path(real_loc["real_path"])
+            if not skill_dir.exists():
+                continue
+            inferred_url, method, confidence = infer_github_url(
+                skill_name, skill_dir, rate_remaining, rate_reset
+            )
+            if inferred_url:
+                # Update the in-memory index (do NOT write to SKILL.md)
+                if "github_url" not in meta:
+                    meta["github_url"] = inferred_url
+                    meta["_enrichment"] = {"method": method, "confidence": confidence}
+                    skill_data["metadata"] = meta
+                    enriched += 1
+                    print(f"  [enriched] {skill_name}: {inferred_url} ({method}, {confidence:.0%})")
+        if enriched > 0:
+            print(f"\nEnrichment found {enriched} URLs — index will reflect inferred values.")
+        else:
+            print("  No enrichment opportunities found.")
 
     # Save
     output_path = Path(args.output)

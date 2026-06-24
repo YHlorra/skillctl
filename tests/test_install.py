@@ -12,7 +12,7 @@ from conftest import SKILLCTL_ROOT
 
 def test_install_creates_parent_wrapper_with_git(run_skillctl, sandbox_lib, fake_source_repo):
     """Fresh install: <lib>/<repo>/.git/ + skill subdirs preserved."""
-    result = run_skillctl("install", fake_source_repo.as_uri())
+    result = run_skillctl("install", "--non-interactive", fake_source_repo.as_uri())
 
     assert result.returncode == 0, f"install failed: {result.stderr}"
     assert "Installed to" in result.stdout
@@ -32,11 +32,11 @@ def test_install_creates_parent_wrapper_with_git(run_skillctl, sandbox_lib, fake
 def test_install_collision_refuses_without_reinstall(run_skillctl, sandbox_lib, fake_source_repo):
     """Second install to same path refuses with actionable message."""
     # First install: succeeds
-    r1 = run_skillctl("install", fake_source_repo.as_uri())
+    r1 = run_skillctl("install", "--non-interactive", fake_source_repo.as_uri())
     assert r1.returncode == 0
 
     # Second install: refuses
-    r2 = run_skillctl("install", fake_source_repo.as_uri())
+    r2 = run_skillctl("install", "--non-interactive", fake_source_repo.as_uri())
     assert r2.returncode != 0, "second install must fail"
     combined = r2.stdout + r2.stderr
     assert "Path exists" in combined
@@ -46,7 +46,7 @@ def test_install_collision_refuses_without_reinstall(run_skillctl, sandbox_lib, 
 def test_install_reinstall_backs_up_and_refreshes(run_skillctl, sandbox_lib, fake_source_repo):
     """--reinstall backs up working tree and refreshes via fetch+reset."""
     # First install
-    r1 = run_skillctl("install", fake_source_repo.as_uri())
+    r1 = run_skillctl("install", "--non-interactive", fake_source_repo.as_uri())
     assert r1.returncode == 0
 
     # Mutate one skill in the wrapper to verify backup captures working tree
@@ -56,7 +56,7 @@ def test_install_reinstall_backs_up_and_refreshes(run_skillctl, sandbox_lib, fak
     target_file.write_text(original_content + "\n# local edit\n", encoding="utf-8")
 
     # Reinstall
-    r2 = run_skillctl("install", "--reinstall", fake_source_repo.as_uri())
+    r2 = run_skillctl("install", "--non-interactive", "--reinstall", fake_source_repo.as_uri())
     assert r2.returncode == 0, f"reinstall failed: {r2.stderr}"
 
     # Backup dir exists with the local edit
