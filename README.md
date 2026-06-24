@@ -104,9 +104,9 @@ one non-stdlib dep.
   above
 * **Git on `PATH`** — `git --version`; used for clone / fetch / pull /
   reset
-* **PyYAML** — the only non-stdlib dependency
+* **PyYAML + pytest** — the only non-stdlib dependencies
   ```sh
-  pip install pyyaml
+  pip install -r requirements.txt
   ```
 
 ### Installation

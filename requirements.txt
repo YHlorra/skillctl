@@ -1,0 +1,9 @@
+# skillctl runtime + test dependencies
+#
+# Keep this file in sync with the install commands in CI
+# (.github/workflows/test.yml) and the README "Prerequisites" section.
+#
+# Runtime:
+pyyaml>=6.0
+# Test:
+pytest>=7.0
