@@ -89,4 +89,9 @@ def test_update_repos_executes_pull(run_skillctl, sandbox_lib, tmp_path):
     result = run_skillctl("update", "--repos", "--library", str(sandbox_lib))
 
     assert result.returncode == 0, f"pull failed: {result.stderr}"
-    assert "Pulled" in result.stdout or "already up to date" in result.stdout.lower() or "Skipped" in result.stdout
+    assert (
+        "Pulled" in result.stdout
+        or "already up to date" in result.stdout.lower()
+        or "Up to date" in result.stdout
+        or "Skipped" in result.stdout
+    )

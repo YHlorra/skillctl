@@ -296,14 +296,16 @@ def update_wrapper_repos(
     Returns dict with:
     - repos_found: int (direct children with .git/)
     - pulled: [{repo, output}]  (successful pulls)
-    - would_pull: [repo_name]    (dry-run or no-remote-skipped)
-    - skipped: [{repo, reason}]  (no remote, worktree marker, etc.)
-    - errors: [{repo, stderr}]   (dirty, conflict, timeout, network)
+    - would_pull: [repo_name]   (dry-run, or local behind remote)
+    - up_to_date: [repo_name]   (local HEAD == remote HEAD, skipped)
+    - skipped: [{repo, reason}] (no remote, worktree marker, etc.)
+    - errors: [{repo, stderr}]  (dirty, conflict, timeout, network)
     """
     summary = {
         "repos_found": 0,
         "pulled": [],
         "would_pull": [],
+        "up_to_date": [],
         "skipped": [],
         "errors": [],
     }
@@ -347,6 +349,50 @@ def update_wrapper_repos(
         if remote_proc.returncode != 0 or not remote_proc.stdout.strip():
             summary["skipped"].append({"repo": child.name, "reason": "no remote"})
             continue
+
+        # Extract fetch URL (first line ending in "(fetch)")
+        remote_url = None
+        for line in remote_proc.stdout.splitlines():
+            if line.endswith("(fetch)"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    remote_url = parts[1]
+                break
+        if not remote_url:
+            summary["skipped"].append({"repo": child.name, "reason": "no fetch url"})
+            continue
+
+        # Compare local HEAD to remote HEAD — skip if already in sync.
+        # NOTE: use raw `git ls-remote <url> HEAD`, not get_remote_hash(),
+        # because the helper builds `refs/heads/{branch}` and `HEAD` is not
+        # a real ref under refs/heads/. No commit-count behind: that needs
+        # a full `git fetch` first; ls-remote alone is enough to classify
+        # up-to-date vs. needs-pull.
+        try:
+            ls_proc = subprocess.run(
+                ["git", "ls-remote", remote_url, "HEAD"],
+                capture_output=True, text=True, timeout=15,
+            )
+        except subprocess.TimeoutExpired:
+            ls_proc = None
+        remote_hash = None
+        if ls_proc and ls_proc.returncode == 0 and ls_proc.stdout.strip():
+            parts = ls_proc.stdout.strip().split()
+            if parts:
+                remote_hash = parts[0]
+
+        if remote_hash:
+            try:
+                local_proc = subprocess.run(
+                    ["git", "-C", str(child), "rev-parse", "HEAD"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                local_hash = local_proc.stdout.strip() if local_proc.returncode == 0 else ""
+            except subprocess.TimeoutExpired:
+                local_hash = ""
+            if local_hash and local_hash == remote_hash:
+                summary["up_to_date"].append(child.name)
+                continue
 
         if dry_run or not execute:
             summary["would_pull"].append(child.name)
@@ -410,6 +456,11 @@ def print_repos_summary(summary: dict):
     if summary["would_pull"]:
         print(f"\n→ Would pull ({len(summary['would_pull'])}):")
         for name in summary["would_pull"]:
+            print(f"  - {name}")
+
+    if summary["up_to_date"]:
+        print(f"\n✓ Up to date ({len(summary['up_to_date'])}):")
+        for name in summary["up_to_date"]:
             print(f"  - {name}")
 
     if summary["skipped"]:
