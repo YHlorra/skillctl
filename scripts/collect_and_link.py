@@ -16,6 +16,8 @@ from datetime import datetime
 from typing import Optional, Dict, List
 import subprocess
 
+from _lib import backup
+
 # Force UTF-8 encoding for stdout on Windows
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -40,25 +42,6 @@ def resolve_symlink_target(path: Path) -> Path:
         return path.resolve()
     except OSError:
         return path
-
-
-def create_backup(path: Path, backup_dir: Path) -> Optional[Path]:
-    """Create backup of a directory before modification."""
-    if not path.exists():
-        return None
-
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_name = f"{path.name}_{timestamp}"
-    backup_path = backup_dir / backup_name
-
-    try:
-        shutil.copytree(path, backup_path, symlinks=False, dirs_exist_ok=False)
-        print(f"  Backup created: {backup_path}")
-        return backup_path
-    except Exception as e:
-        print(f"  Warning: Backup failed: {e}")
-        return None
 
 
 def remove_symlink(path: Path) -> bool:
@@ -175,7 +158,6 @@ class SkillCollector:
             self.decisions = {}
             self.decisions_data = None
 
-        self.backup_dir = Path.home() / ".skill-manager" / "backups"
         self.results = {
             "collected": [],
             "symlinks_created": [],
@@ -240,12 +222,24 @@ class SkillCollector:
         if not dry_run:
             target_dir.mkdir(parents=True, exist_ok=True)
 
-        # Backup existing if needed
-        if not dry_run and target_skill_dir.exists():
-            backup_path = create_backup(target_skill_dir, self.backup_dir)
-            if backup_path and not is_symlink(target_skill_dir):
-                # Only backup real directories
-                pass
+        # Backup existing target if needed (conflict case)
+        # Derive library_path: use target_dir.parent if it exists and is a parent of
+        # target_dir (meaningful for SKILL library layouts); otherwise target_dir itself.
+        if not dry_run and target_skill_dir.exists() and not is_symlink(target_skill_dir):
+            library_path = target_dir.parent if target_dir.parent != target_dir and target_dir.parent.exists() else target_dir
+            backup_path = backup.create_backup(target_skill_dir, library_path, op_label="link")
+
+            # Remove existing and copy source
+            shutil.rmtree(target_skill_dir)
+            try:
+                shutil.copytree(source_path, target_skill_dir, symlinks=False, dirs_exist_ok=False)
+            except Exception as e:
+                meta = backup.keep_backup(backup_path, reason=str(e))
+                print(f"[link] FAILED; backup retained at {meta['backup_path']}", file=sys.stderr)
+                raise
+            else:
+                backup.commit_backup(backup_path)
+                print(f"[link] backup auto-removed")
 
         # For independent git repos, prefer symlink to avoid copy permission issues
         if is_git_repo(source_path):
@@ -280,18 +274,32 @@ class SkillCollector:
                         self.results["symlinks_removed"].append(str(remove_expanded))
                 else:
                     # It's a real directory, convert to symlink
-                    # First backup
-                    backup_path = create_backup(remove_expanded, self.backup_dir)
+                    # Derive library_path for _lib.backup (same heuristic as above)
+                    library_path = target_dir.parent if target_dir.parent != target_dir and target_dir.parent.exists() else target_dir
+                    try:
+                        backup_path = backup.create_backup(remove_expanded, library_path, op_label="link")
+                    except FileNotFoundError:
+                        backup_path = None
 
-                    # Remove original
-                    if remove_expanded.is_dir():
-                        shutil.rmtree(remove_expanded)
+                    if backup_path:
+                        # Remove original and create symlink
+                        if remove_expanded.is_dir():
+                            shutil.rmtree(remove_expanded)
+                        else:
+                            remove_expanded.unlink()
+
+                        if create_symlink(target_skill_dir, remove_expanded):
+                            self.results["symlinks_created"].append(str(remove_expanded))
+                            backup.commit_backup(backup_path)
+                            print(f"[link] backup auto-removed")
                     else:
-                        remove_expanded.unlink()
-
-                    # Create symlink
-                    if create_symlink(target_skill_dir, remove_expanded):
-                        self.results["symlinks_created"].append(str(remove_expanded))
+                        # No backup possible (source not found), still try to remove/create symlink
+                        if remove_expanded.is_dir():
+                            shutil.rmtree(remove_expanded)
+                        else:
+                            remove_expanded.unlink()
+                        if create_symlink(target_skill_dir, remove_expanded):
+                            self.results["symlinks_created"].append(str(remove_expanded))
 
         return True
 

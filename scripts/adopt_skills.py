@@ -8,12 +8,11 @@ or symlink (Unix) pointing to the canonical library location.
 
 Usage:
     python adopt_skills.py --source <dir> --library <dir> [--dry-run]
-    python adopt_skills.py --yes --backup <dir> --rebuild-index
+    python adopt_skills.py --yes --rebuild-index
 
 Flags:
     --dry-run         Preview only; do not move/copy/link anything
     --yes             Skip interactive confirmation
-    --backup DIR      Backup original source to this dir before adoption
     --rebuild-index   Run scan to refresh index.json after adoption
     --source PATH     Source directory to scan (default: ~/.claude/skills/)
     --library PATH    Target library root (default: SKILL_LIBRARY_PATH or user.json)
@@ -25,9 +24,9 @@ import json
 import shutil
 import argparse
 import subprocess
-from datetime import datetime
 from pathlib import Path
 
+from _lib.backup import create_backup, commit_backup, keep_backup
 from _lib.gates import run_gates, format_report
 from _lib.tty import should_prompt_user, prompt_user_confirm
 
@@ -154,24 +153,10 @@ def copy_skill_files(src_skill_dir: Path, dst_skill_dir: Path) -> bool:
         return False
 
 
-def backup_source(src_skill_dir: Path, backup_root: Path, skill_name: str) -> Path | None:
-    """Move src_skill_dir to backup_root/<skill_name>_timestamp/."""
-    try:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_dir = backup_root / f"{skill_name}_{ts}"
-        backup_root.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src_skill_dir, backup_dir)
-        return backup_dir
-    except Exception as e:
-        print(f"  Warning: backup failed: {e}")
-        return None
-
-
 def adopt_skill(
     src_skill_dir: Path,
     library_path: Path,
     dry_run: bool,
-    backup_root: Path | None,
     confirmed: bool,
 ) -> tuple[str, str]:
     """
@@ -190,30 +175,35 @@ def adopt_skill(
     if dst_skill_dir.exists():
         return "skipped", f"target already exists: {dst_skill_dir}"
 
-    # Backup source if requested
-    if backup_root:
-        backup_dir = backup_source(src_skill_dir, backup_root, skill_name)
-        if backup_dir:
-            print(f"  Backed up to: {backup_dir}")
+    # Create backup before destructive operations
+    backup = create_backup(src_skill_dir, library_path, op_label="adopt")
 
-    # Copy skill files
-    if not copy_skill_files(src_skill_dir, dst_skill_dir):
-        return "error", "copy failed"
-
-    # Verify copy
-    if not (dst_skill_dir / "SKILL.md").exists():
-        return "error", "copy verification failed: SKILL.md not found in destination"
-
-    # Remove original source (now safely copied)
+    # Copy skill files and create junction (destructive block)
     try:
-        shutil.rmtree(src_skill_dir)
-    except Exception as e:
-        print(f"  Warning: could not remove original source: {e}")
+        if not copy_skill_files(src_skill_dir, dst_skill_dir):
+            raise OSError("copy failed")
 
-    # Create junction at source pointing to library location
-    ok, err = create_junction(src_skill_dir, dst_skill_dir)
-    if not ok:
-        return "error", f"junction creation failed: {err}"
+        # Verify copy
+        if not (dst_skill_dir / "SKILL.md").exists():
+            raise OSError("copy verification failed: SKILL.md not found in destination")
+
+        # Remove original source (now safely copied)
+        try:
+            shutil.rmtree(src_skill_dir)
+        except Exception as e:
+            print(f"  Warning: could not remove original source: {e}")
+
+        # Create junction at source pointing to library location
+        ok, err = create_junction(src_skill_dir, dst_skill_dir)
+        if not ok:
+            raise OSError(f"junction creation failed: {err}")
+    except Exception as e:
+        meta = keep_backup(backup, reason=str(e))
+        print(f"[adopt] FAILED; backup retained at {meta['backup_path']}", file=sys.stderr)
+        raise
+    else:
+        commit_backup(backup)
+        print("[adopt] backup auto-removed")
 
     return "adopted", "ok"
 
@@ -229,10 +219,6 @@ def main():
     parser.add_argument(
         "--yes", action="store_true",
         help="Skip interactive confirmation"
-    )
-    parser.add_argument(
-        "--backup", type=str,
-        help="Backup original source to this directory before adoption"
     )
     parser.add_argument(
         "--rebuild-index", action="store_true",
@@ -273,8 +259,6 @@ def main():
     print(f"[adopt] Source:  {source_path}")
     print(f"[adopt] Library: {library_path}")
     print(f"[adopt] Mode:    {'DRY-RUN' if args.dry_run else 'LIVE'}")
-    if args.backup:
-        print(f"[adopt] Backup:  {args.backup}")
     print()
 
     # Read managed skills from index
@@ -314,7 +298,6 @@ def main():
         return 0
 
     # Process each skill
-    backup_root = Path(args.backup) if args.backup else None
     adopted = 0
     skipped = 0
     gated_out = 0
@@ -356,7 +339,6 @@ def main():
             skill_dir,
             library_path,
             dry_run=args.dry_run,
-            backup_root=backup_root,
             confirmed=True,
         )
         if status == "adopted":

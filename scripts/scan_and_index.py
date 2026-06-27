@@ -28,6 +28,7 @@ import argparse
 from urllib.parse import quote_plus
 from _lib.tty import should_prompt_user
 from _lib.gates import run_gates, format_report
+from _lib.backup import create_backup, commit_backup, keep_backup
 
 # Force UTF-8 encoding for stdout on Windows
 if hasattr(sys.stdout, "reconfigure"):
@@ -922,18 +923,13 @@ def install_from_github(
                 # NOTE: we do NOT shutil.rmtree the wrapper — that would lock on
                 # .git/pack/* on Windows. Instead we git clean -fdx + git reset --hard
                 # to replace working tree content while preserving .git/.
-                if backup_dir is None:
-                    backup_dir = install_path / ".skillctl-backup"
-                backup_dir.mkdir(parents=True, exist_ok=True)
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                backup_path = backup_dir / f"{repo_name}_{ts}"
-                shutil.copytree(
+                backup = create_backup(
                     target_path,
-                    backup_path,
-                    symlinks=False,
-                    ignore=shutil.ignore_patterns(".git"),
+                    install_path,
+                    op_label=f"install-{repo_name}",
+                    ignore_git=True,  # KEEP THIS — avoids Windows .git/pack file lock
                 )
-                print(f"[install] Backup: {backup_path}")
+                print(f"[install] Backup: {backup}")
                 # Refresh existing wrapper in-place (avoids Windows .git/ lock)
                 try:
                     clean_proc = subprocess.run(
@@ -977,8 +973,12 @@ def install_from_github(
                     print("git operation timed out.", file=sys.stderr)
                     return 1
                 except Exception as e:
-                    print(f"Reinstall failed: {e}", file=sys.stderr)
-                    return 1
+                    meta = keep_backup(backup, reason=str(e))
+                    print(f"[install] FAILED; backup retained at {meta['backup_path']}", file=sys.stderr)
+                    raise
+                else:
+                    commit_backup(backup)
+                    print("[install] backup auto-removed")
             else:
                 shutil.move(str(tmp_repo_path), str(target_path))
                 print(f"[install] Installed to: {target_path}")
@@ -1049,7 +1049,7 @@ def main():
     parser.add_argument(
         "--reinstall",
         action="store_true",
-        help="Overwrite existing install path (backs up to <library>/.skillctl-backup/<ts>/<repo>/)",
+        help="Overwrite existing install path (backup auto-managed by _lib.backup; auto-removed on success, retained on failure)",
     )
     parser.add_argument(
         "--no-auto-nested",

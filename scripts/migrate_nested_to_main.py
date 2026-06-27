@@ -23,6 +23,7 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
+from _lib.backup import create_backup, commit_backup, keep_backup
 from _lib.gates import run_gates, format_report
 from _lib.tty import should_prompt_user, prompt_user_confirm
 
@@ -35,7 +36,6 @@ if _BASE_DIR_RESOLVED is None:
     )
 BASE_DIR = _BASE_DIR_RESOLVED
 INDEX_FILE = BASE_DIR / "skillctl" / "index.json"
-BACKUP_DIR = BASE_DIR / ".backup_nested_migration"
 
 
 def expand_path(path_str: str) -> Path:
@@ -55,25 +55,6 @@ def save_index(index: dict):
     """Save index.json."""
     with open(INDEX_FILE, "w", encoding="utf-8") as f:
         json.dump(index, f, indent=2, ensure_ascii=False)
-
-
-def create_backup(path: Path) -> Path:
-    """Create backup of a directory."""
-    if not path.exists():
-        return None
-
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_name = f"{path.name}_{timestamp}"
-    backup_path = BACKUP_DIR / backup_name
-
-    try:
-        shutil.copytree(path, backup_path, symlinks=False, dirs_exist_ok=False)
-        print(f"  Backup created: {backup_path}")
-        return backup_path
-    except Exception as e:
-        print(f"  Warning: Backup failed: {e}")
-        return None
 
 
 class NestedRepoMigrator:
@@ -160,11 +141,10 @@ class NestedRepoMigrator:
                         continue
 
                 target_path = BASE_DIR / skill.name
-                skill_backup = None
 
                 # Backup if exists
                 if target_path.exists():
-                    skill_backup = create_backup(target_path)
+                    backup = create_backup(target_path, BASE_DIR, op_label="migrate")
                     try:
                         shutil.rmtree(target_path)
                     except Exception as e:
@@ -174,30 +154,26 @@ class NestedRepoMigrator:
                         })
                         continue
 
-                # Copy skill
-                try:
+                    # Copy skill
+                    try:
+                        shutil.copytree(skill, target_path, symlinks=False, dirs_exist_ok=False)
+                    except Exception as e:
+                        meta = keep_backup(backup, reason=str(e))
+                        print(f"[migrate] FAILED; backup retained at {meta['backup_path']}", file=sys.stderr)
+                        raise
+                    else:
+                        commit_backup(backup)
+                        print(f"[migrate] backup auto-removed")
+                else:
+                    # Fresh install, no backup needed
                     shutil.copytree(skill, target_path, symlinks=False, dirs_exist_ok=False)
-                    self.migrated.append({
-                        "skill": skill.name,
-                        "source": str(skill),
-                        "target": str(target_path),
-                        "backup": str(skill_backup) if skill_backup else None
-                    })
-                    print(f"    [MIGRATED] {skill.name}")
-                except Exception as e:
-                    self.errors.append({
-                        "skill": skill.name,
-                        "error": str(e)
-                    })
-                    # Restore backup if exists
-                    if skill_backup and skill_backup.exists():
-                        try:
-                            shutil.rmtree(target_path)
-                            shutil.copytree(skill_backup, target_path)
-                            print(f"    [RESTORED FROM BACKUP] {skill.name}")
-                        except:
-                            pass
-                    print(f"    [ERROR] {skill.name}: {e}")
+
+                self.migrated.append({
+                    "skill": skill.name,
+                    "source": str(skill),
+                    "target": str(target_path),
+                })
+                print(f"    [MIGRATED] {skill.name}")
 
         return self.get_results()
 
