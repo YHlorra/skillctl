@@ -12,11 +12,11 @@ Usage:
     python check_updates.py --fetch             # Fetch remote refs before checking
 """
 
-import os
 import sys
 import json
 import argparse
 import subprocess
+import yaml
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -490,17 +490,24 @@ def main():
             )
             return 2
 
-        # Resolve library root: --library > SKILL_LIBRARY_PATH > skillctl canonical
+        # Resolve library root: --library flag > scan-config.yaml (canonical_path)
         if args.library:
             library_root = expand_path(args.library)
         else:
-            env_lib = os.environ.get("SKILL_LIBRARY_PATH")
-            if env_lib:
-                library_root = expand_path(env_lib)
-            else:
-                # Fall back to skillctl's own directory's parent
-                script_dir = Path(__file__).parent
-                library_root = (script_dir.parent.parent).resolve()
+            config_path = Path(__file__).parent.parent / "scan-config.yaml"
+            if not config_path.exists():
+                print(
+                    f"Error: --library not given and scan-config.yaml not found at {config_path}",
+                    file=sys.stderr,
+                )
+                print("Hint: pass --library <path> or run `skillctl scan` first.", file=sys.stderr)
+                return 1
+            cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            lib = cfg.get("canonical_path")
+            if not lib:
+                print(f"Error: scan-config.yaml has no 'canonical_path'", file=sys.stderr)
+                return 1
+            library_root = expand_path(lib)
 
         summary = update_wrapper_repos(
             library_root=library_root,

@@ -7,19 +7,13 @@ skillctl v5.0 (mandatory 2-gate protocol) - 统一 CLI 入口
 """
 import argparse
 import json
-import os
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
-SCRIPTS_DIR = Path(
-    os.environ.get("SKILLCTL_SCRIPTS_DIR", str(Path(__file__).resolve().parent))
-).expanduser().resolve()
-# SKILLCTL_ROOT 默认跟 SCRIPTS_DIR 同级；可通过环境变量覆盖
-SKILLCTL_ROOT = Path(
-    os.environ.get("SKILLCTL_ROOT", str(SCRIPTS_DIR.parent))
-).expanduser().resolve()
+SCRIPTS_DIR = Path(__file__).resolve().parent
+SKILLCTL_ROOT = SCRIPTS_DIR.parent
 
 # 命令 → 脚本映射（None 表示内置）
 COMMANDS = {
@@ -70,21 +64,12 @@ INTERNAL_FLAGS = {"--skillctl-root", "--no-color"}
 
 
 def find_config() -> Path:
-    """定位 scan-config.yaml，优先级：环境变量 → skillctl_root → 当前目录"""
-    env = os.environ.get("SKILLCTL_CONFIG")
-    if env:
-        p = Path(env).expanduser()
-        if p.exists():
-            return p
-    default = SKILLCTL_ROOT / "scan-config.yaml"
-    return default if default.exists() else Path("scan-config.yaml")
+    """定位 scan-config.yaml。"""
+    return SKILLCTL_ROOT / "scan-config.yaml"
 
 
 def find_index() -> Path:
-    """定位 index.json"""
-    env = os.environ.get("SKILLCTL_INDEX")
-    if env:
-        return Path(env).expanduser()
+    """定位 index.json。"""
     return SKILLCTL_ROOT / "index.json"
 
 
