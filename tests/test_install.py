@@ -43,13 +43,13 @@ def test_install_collision_refuses_without_reinstall(run_skillctl, sandbox_lib, 
     assert "--reinstall" in combined
 
 
-def test_install_reinstall_backs_up_and_refreshes(run_skillctl, sandbox_lib, fake_source_repo):
-    """--reinstall backs up working tree and refreshes via fetch+reset."""
+def test_install_reinstall_refreshes_without_leaving_backup(run_skillctl, sandbox_lib, fake_source_repo):
+    """--reinstall refreshes in place; backup auto-removes on success since v6 unified backup layer; only failure retains."""
     # First install
     r1 = run_skillctl("install", "--non-interactive", fake_source_repo.as_uri())
     assert r1.returncode == 0
 
-    # Mutate one skill in the wrapper to verify backup captures working tree
+    # Mutate one skill in the wrapper to verify refresh actually happened
     wrapper = sandbox_lib / "fake"
     target_file = wrapper / "skill1" / "SKILL.md"
     original_content = target_file.read_text(encoding="utf-8")
@@ -59,15 +59,11 @@ def test_install_reinstall_backs_up_and_refreshes(run_skillctl, sandbox_lib, fak
     r2 = run_skillctl("install", "--non-interactive", "--reinstall", fake_source_repo.as_uri())
     assert r2.returncode == 0, f"reinstall failed: {r2.stderr}"
 
-    # Backup dir exists with the local edit
-    backup_root = sandbox_lib / ".skillctl-backup"
-    assert backup_root.is_dir(), f"missing backup dir {backup_root}"
-    backups = list(backup_root.iterdir())
-    assert len(backups) == 1, f"expected 1 backup, got {backups}"
-    backup = backups[0]
-    backed_up_skill = backup / "skill1" / "SKILL.md"
-    assert backed_up_skill.is_file()
-    assert "local edit" in backed_up_skill.read_text(encoding="utf-8")
-
     # Wrapper content was refreshed (local edit gone)
     assert "local edit" not in target_file.read_text(encoding="utf-8")
+
+    # Backup root may exist (date buckets persist), but per-op backup dirs must be gone
+    backup_root = sandbox_lib / ".skillctl-backup"
+    if backup_root.is_dir():
+        leftover = [p for p in backup_root.rglob("install-fake_*") if p.is_dir()]
+        assert not leftover, f"backup not auto-removed: {leftover}"

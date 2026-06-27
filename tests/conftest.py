@@ -176,8 +176,16 @@ def assert_clean_lib(lib: Path):
     """Assert that lib contains no leftover test pollution."""
     if not lib.exists():
         return
-    leftovers = [p for p in lib.iterdir()
-                 if p.name not in {".skillctl-backup", ".skill-adopt-backup"}]
+    leftovers = []
+    for p in lib.iterdir():
+        if p.name == ".skillctl-backup":
+            # After auto-commit, only empty date buckets may remain.
+            # Flag any per-op backup dir (non-empty descendant).
+            for child in p.iterdir():
+                if any(child.iterdir()):
+                    leftovers.append(child)
+            continue
+        leftovers.append(p)
     # Test cleanup happens automatically via tmp_path fixture teardown,
     # but this is a defensive check during the test.
     assert not leftovers, f"Test left leftover dirs in {lib}: {leftovers}"

@@ -23,7 +23,7 @@ skillctl adopt --dry-run
 
 # 2. 确认无误后执行（带备份）
 #    v5+: gate 验证（validate + score）先通过才执行；--non-interactive 自动确认通过后的 prompt
-skillctl adopt --yes --non-interactive --backup .skill-adopt-backup
+skillctl adopt --yes --non-interactive
 
 # 3. 验证：index.json 已更新，原位置变 junction
 skillctl status
@@ -136,19 +136,24 @@ skillctl migrate --execute --non-interactive
 - 物理文件�?`ljg-skills/skills/ljg-card/` 复制�?`<library>\ljg-card/`
 - 嵌套 repo 保留（仍�?`git pull` 更新�?- 自动重建 index
 
-## Recipe 9: 删除 skill（带回滚�?
-**场景**：删�?`old-skill`，担心误操作�?
+## Recipe 9: 删除 skill（不可逆 — 不再自动备份）
+
+**v6 设计变更**：`delete` 不再创建备份。删除是不可逆的，要保留请先自己 `cp -r`。
+
 ```bash
-# 1. 备份
-skillctl delete --skill old-skill --backup .delete-backup --yes
+# 1. 默认行为：3 秒倒计时，Ctrl-C 中止
+skillctl delete old-skill
 
-# 2. 验证
-skillctl status
+# 2. CI / 脚本模式：跳过倒计时
+skillctl delete old-skill --yes
 
-# 3. 后悔了？恢复
-cp -r .delete-backup/<timestamp>/old-skill/ <library>/
-skillctl scan --config scan-config.yaml
+# 3. 后悔了？重新装回来
+#    如果 index.json 里记录了 GitHub URL，CLI 会自动提示：
+#      "To restore: skillctl install <github_url>"
+#    否则手动恢复。
 ```
+
+**为什么这样**：v6 之前每个写命令各自定义备份目录（`.delete-backup` / `.skill-adopt-backup` / `.backup_nested_migration` / `.skillctl-backup`），用户心智负担重、备份无限累积。现在统一到 `<library>/.skillctl-backup/<date>/<op>-<target>_<ts>/`，**成功即删**，**失败才留**。删除单独走 3 秒倒计时 + post-delete notice 提示 GitHub URL，不混进备份机制。
 
 ## Recipe 10: 批量操作（loop�?
 **场景**：要给所�?skill 跑治理验证�?
@@ -166,23 +171,28 @@ done
 
 ## Recipe 11: 出错恢复
 
-**场景**：写操作半途失败，index 与物理状态不一致�?
+**场景**：写操作中途失败，index / 磁盘状态不一致。
+
+**v6 变更**：所有失败留下的备份都在同一个目录树，按日期分桶。
+
 ```bash
-# 1. 看最近错�?skillctl status        # �?last-tool-error.json
+# 1. 看最近错误
+skillctl status        # 读 last-tool-error.json
 cat .omc/state/last-tool-error.json
 
-# 2. 找备�?ls -la .skill-adopt-backup/   # adopt
-ls -la .delete-backup/         # delete
-ls -la .backup_nested_migration/  # migrate
+# 2. 找失败的备份（v6 之前还要去 3 个不同目录找）
+ls -la <library>/.skillctl-backup/<YYYY-MM-DD>/
+# 例：.skillctl-backup/2026-06-27/migrate-my-skills_143022/
 
 # 3. 重建索引（最常见的恢复手段）
 skillctl scan --config scan-config.yaml
 
 # 4. 物理回滚（如果上一步没用）
-cp -r <backup>/<skill-name>/ <library>/
+cp -r <library>/.skillctl-backup/<date>/<op>-<target>_<ts>/<skill-name>/ <library>/
 skillctl scan --config scan-config.yaml
 ```
 
+**成功的写操作不会留任何备份**（v6 起 auto-commit）。只有失败才有备份可恢复。
 ## Recipe 12: Dry-run 优先（写操作铁律�?
 **所有写操作前先 dry-run**�?
 ```bash
