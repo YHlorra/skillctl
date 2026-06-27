@@ -39,7 +39,6 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Tuple
 from _lib.paths import expand_path, is_symlink, resolve_symlink_target
-from _lib.paths import expand_path, is_symlink, resolve_symlink_target
 
 # Force UTF-8 encoding for stdout on Windows
 if hasattr(sys.stdout, "reconfigure"):

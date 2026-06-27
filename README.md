@@ -23,6 +23,12 @@
   </p>
 </div>
 
+> **v5.0.0 — current development.** Mandatory 2-gate protocol on every
+> `install` / `adopt` / `migrate`. Unified backup layer (`scripts/_lib/backup.py`)
+> for all write operations; `delete` is intentionally irreversible (3-second
+> abort window + `--yes` to skip). 14 functional scripts + dispatcher, no
+> daemon, no telemetry. See [CHANGELOG](./CHANGELOG.md).
+
 <details>
   <summary>Table of Contents</summary>
   <ol>
@@ -67,7 +73,7 @@ GitHub you want to **keep its parent wrapper with `.git/` so `git pull`
 updates work** — not flatten it to N sibling folders.
 
 `skillctl` solves this with a thin `argparse` dispatcher
-(`scripts/skillctl.py`) on top of v5.0.0 — 13 functional scripts + dispatcher.
+(`scripts/skillctl.py`) on top of v5.0.0 — 14 functional scripts + dispatcher.
 One command, one job — no framework, no daemon, no remote calls.
 
 ```text
@@ -253,7 +259,7 @@ interaction is `git` itself, invoked by `install` and `update`. We use
 `yaml.safe_load` exclusively to mitigate crafted-YAML attacks against
 `SKILL.md` frontmatter.
 
-**Supported versions:** 5.0.x (active), 4.0.x (best-effort), 3.x (best-effort).
+**Supported versions:** 5.0.x (active, unreleased on `main`), 4.0.x (best-effort), 3.x (best-effort).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -271,12 +277,16 @@ helpers (gate evaluation, TTY-aware prompts) live under `scripts/_lib/`.
                   │ subprocess.run([python, <script>, *args])
                   ▼
 ┌──────────────────────────────────────────────────┐
-│  scripts/ — 15 functional scripts + 2 built-ins  │
+│  scripts/ — 14 functional scripts + 1 dispatcher │
 │  ┌──────────────────────────┐                    │
 │  │ scripts/_lib/ (v5+)      │                    │
 │  │   gates.py    GateReport │  ← shared by all   │
 │  │   tty.py      prompt /   │     L2 commands    │
 │  │              TTY detect  │                    │
+│  │   backup.py   create/    │  ← all write ops   │
+│  │              commit/keep │     route here     │
+│  │   paths.py    expand/    │  ← shared by all   │
+│  │              symlink     │     scripts        │
 │  └──────────────────────────┘                    │
 └──────────────────────────────────────────────────┘
 ```
@@ -306,6 +316,8 @@ Key scripts and their jobs:
 | `skillctl.py` | The dispatcher itself — arg transform + `COMMANDS` index |
 | `_lib/gates.py` | Run validate + score, assemble frozen `GateReport` |
 | `_lib/tty.py` | TTY-aware prompt / auto-detect non-interactive |
+| `_lib/backup.py` | Unified backup layer — `create_backup` / `commit_backup` / `keep_backup` (single source of truth for adopt / install --reinstall / link / migrate) |
+| `_lib/paths.py` | Path expansion, symlink / junction detection, git-repo probe |
 
 State files (auto-managed, never committed):
 
@@ -314,8 +326,7 @@ State files (auto-managed, never committed):
 | `<root>/index.json` | `scan` | The library index |
 | `<root>/.skillctl/state.json` | `init` | CLI-level state cache |
 | `<root>/.omc/state/last-tool-error.json` | any script | Last error trace for recovery |
-| `<lib>/.skill-adopt-backup/` | `adopt` | Rollback target for `adopt` |
-| `<lib>/.skillctl-backup/<ts>/` | `install --reinstall` | Rollback target for reinstall |
+| `<lib>/.skillctl-backup/<YYYY-MM-DD>/<op>-<target>_<HHMMSS>/` | adopt / install --reinstall / link / migrate | Unified backup directory. Auto-removed on success, retained on failure (location recorded in `last-tool-error.json`). `delete` is excluded by design — it's irreversible, self-backup via `cp` / `mv` is the contract. |
 
 Detailed design notes:
 [`references/architecture.md`](references/architecture.md).
@@ -399,12 +410,19 @@ skillctl validate --strict
 
 ### Safety
 
-* All write operations (`adopt`, `link`, `delete`, `cleanup`, `migrate`)
-  require an explicit `--yes`. Run with `--dry-run` first.
+* All write operations (`adopt`, `link`, `cleanup`, `migrate`) require an
+  explicit `--yes`. Run with `--dry-run` first.
 * **`--yes` in v5**: skips the post-gate user confirmation prompt only.
   It does **not** bypass the gates themselves — use `--no-gate` for that
   (and accept the loud warning).
-* `--backup <dir>` snapshots the working tree before destructive ops.
+* **Unified backup layer** (v5+). `adopt`, `install --reinstall`, `link`,
+  and `migrate` all snapshot to `<lib>/.skillctl-backup/<YYYY-MM-DD>/<op>-<target>_<HHMMSS>/`
+  before mutating. Backups auto-delete on success, persist on failure
+  (location recorded in `.omc/state/last-tool-error.json`).
+* **`delete` is irreversible by design** — no backup, no `--backup` flag.
+  A 3-second abort window with a "Ctrl-C to cancel" prompt is built in;
+  `--yes` skips the countdown for scripted use. Self-backup with
+  `cp -a <skill> /tmp/` if you want a safety net.
 * No network calls. The only remote interaction is `git` itself, invoked
   by the `install` and `update` commands.
 * No mutation of skill content. `skillctl` manages **location**

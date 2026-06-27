@@ -30,7 +30,6 @@ from __future__ import annotations
 import shutil
 from datetime import datetime, date
 from pathlib import Path
-from typing import Optional
 
 BACKUP_ROOT_NAME = ".skillctl-backup"
 

@@ -29,7 +29,6 @@ if hasattr(sys.stdout, "reconfigure"):
 # Never hardcode a path: each operator's library is different.
 from user_config import resolve_library_path
 from _lib.paths import expand_path
-from _lib.paths import expand_path
 _BASE_DIR_RESOLVED = resolve_library_path()
 if _BASE_DIR_RESOLVED is None:
     raise SystemExit(

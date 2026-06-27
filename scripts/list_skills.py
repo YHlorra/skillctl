@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Optional, List, Dict
 import argparse
 from _lib.paths import expand_path
-from _lib.paths import expand_path
 
 # Force UTF-8 encoding for stdout on Windows
 if hasattr(sys.stdout, "reconfigure"):

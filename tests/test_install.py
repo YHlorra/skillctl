@@ -44,7 +44,7 @@ def test_install_collision_refuses_without_reinstall(run_skillctl, sandbox_lib, 
 
 
 def test_install_reinstall_refreshes_without_leaving_backup(run_skillctl, sandbox_lib, fake_source_repo):
-    """--reinstall refreshes in place; backup auto-removes on success since v6 unified backup layer; only failure retains."""
+    """--reinstall refreshes in place; backup auto-removes on success since v5 unified backup layer; only failure retains."""
     # First install
     r1 = run_skillctl("install", "--non-interactive", fake_source_repo.as_uri())
     assert r1.returncode == 0

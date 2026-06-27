@@ -30,7 +30,6 @@ from _lib.tty import should_prompt_user
 from _lib.gates import run_gates, format_report
 from _lib.backup import create_backup, commit_backup, keep_backup
 from _lib.paths import expand_path, is_symlink, resolve_symlink_target
-from _lib.paths import expand_path, is_symlink, resolve_symlink_target
 
 # Force UTF-8 encoding for stdout on Windows
 if hasattr(sys.stdout, "reconfigure"):

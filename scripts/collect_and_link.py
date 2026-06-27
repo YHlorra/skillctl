@@ -33,7 +33,6 @@ import subprocess
 
 from _lib import backup
 from _lib.paths import expand_path, is_symlink, resolve_symlink_target, is_git_repo
-from _lib.paths import expand_path, is_symlink, resolve_symlink_target, is_git_repo
 
 # Force UTF-8 encoding for stdout on Windows
 if hasattr(sys.stdout, "reconfigure"):

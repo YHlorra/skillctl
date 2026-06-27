@@ -30,7 +30,6 @@ from _lib.backup import create_backup, commit_backup, keep_backup
 from _lib.gates import run_gates, format_report
 from _lib.tty import should_prompt_user, prompt_user_confirm
 from _lib.paths import expand_path
-from _lib.paths import expand_path
 
 def resolve_library_path() -> Path:
     """
