@@ -24,7 +24,6 @@ skillctl <command> [options]
 | `--dry-run` | �?| 预览模式 |
 | `--verbose` | �?| 详细日志 |
 | `--quiet` | �?| 静默 |
-| `--backup DIR` | �?| 备份目录 |
 | `--rebuild-index` | �?| scan 后重�?index |
 | `--analyze` | �?| dedup 分析模式 |
 | `--fetch` | �?| update �?fetch 远程 |
@@ -120,7 +119,7 @@ skillctl list [--path <library>] [--filter NAME] [--info]
 ```bash
 skillctl adopt --dry-run                          # 预览
 skillctl adopt --source <dir> --library <dir>    # 指定源和目标
-skillctl adopt --yes --backup <dir> --rebuild-index  # 正式采纳
+skillctl adopt --yes --rebuild-index  # 正式采纳
 ```
 
 指向 `adopt_skills.py`。发现源目录（默认 `~/.claude/skills/`）中未托管的 skill，复制到 library，再将源替换为 junction（Windows）或 symlink（Unix），指向 library 中的目标位置。
@@ -133,7 +132,6 @@ v5+ Gate：每个 skill 在采纳前必须通过 2-gate 验证（validate --stri
 | `--non-interactive` | gate 通过后自动确认，不提示用户（CI / agent 用）|
 | `--no-gate` | 跳过 2-gate 验证（NOT 推荐）|
 | `--gate-mode enforce|skip` | 默认 enforce |
-| `--backup DIR` | 采纳前将原始源目录备份到此目录 |
 | `--rebuild-index` | 采纳完成后运行 scan 刷新 index.json |
 | `--source PATH` | 源目录（默认 `~/.claude/skills/`） |
 | `--library PATH` | 目标 library 根目录（默认 SKILL_LIBRARY_PATH 或 user.json） |
@@ -158,7 +156,7 @@ skillctl dedup --interactive    # 询问用户
 ### delete
 
 ```bash
-skillctl delete --skill <name> --yes --backup .delete-backup
+skillctl delete --skill <name> --yes
 ```
 
 �?`delete_skill.py`（旧 sys.argv 风格，CLI 内部包装�?argparse）�?

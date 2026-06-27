@@ -28,6 +28,8 @@ from _lib.gates import run_gates, format_report
 from _lib.tty import should_prompt_user, prompt_user_confirm
 
 from user_config import resolve_library_path
+from _lib.paths import expand_path
+
 _BASE_DIR_RESOLVED = resolve_library_path()
 if _BASE_DIR_RESOLVED is None:
     raise SystemExit(
@@ -37,12 +39,6 @@ if _BASE_DIR_RESOLVED is None:
 BASE_DIR = _BASE_DIR_RESOLVED
 INDEX_FILE = BASE_DIR / "skillctl" / "index.json"
 
-
-def expand_path(path_str: str) -> Path:
-    """Expand ~ and environment variables in path."""
-    return Path(os.path.expandvars(os.path.expanduser(path_str)))
-
-
 def load_index() -> dict:
     """Load index.json."""
     if not INDEX_FILE.exists():
@@ -50,146 +46,133 @@ def load_index() -> dict:
     with open(INDEX_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
-
 def save_index(index: dict):
     """Save index.json."""
     with open(INDEX_FILE, "w", encoding="utf-8") as f:
         json.dump(index, f, indent=2, ensure_ascii=False)
 
-
-class NestedRepoMigrator:
+def migrate_nested_repos(
+    dry_run: bool = True,
+    gate_mode: str = "enforce",
+    non_interactive: bool = False,
+) -> dict:
     """Migrate skills from nested Git repos to main library."""
+    index = load_index()
+    nested_repos = index.get("nested_repos", [])
+    migrated = []
+    skipped = []
+    gated_out = []
+    errors = []
 
-    def __init__(self, dry_run: bool = True, gate_mode: str = "enforce", non_interactive: bool = False):
-        self.dry_run = dry_run
-        self.gate_mode = gate_mode
-        self.non_interactive = non_interactive
-        self.index = load_index()
-        self.nested_repos = self.index.get("nested_repos", [])
-        self.migrated = []
-        self.skipped = []
-        self.gated_out = []
-        self.errors = []
+    print(f"\n{'=' * 70}")
+    print(f" Migrating Nested Repos to Main Library")
+    print(f"{'=' * 70}")
+    print(f"Mode: {'DRY RUN' if dry_run else 'EXECUTE'}")
+    print(f"Main library: {BASE_DIR}")
+    print(f"Nested repos: {len(nested_repos)}")
+    print()
 
-    def migrate_all(self):
-        """Migrate skills from all nested repos."""
-        print(f"\n{'=' * 70}")
-        print(f" Migrating Nested Repos to Main Library")
+    for repo in nested_repos:
+        repo_path = Path(repo["repo_path"])
+        skills_path = Path(repo["skills_path"])
+        git_url = repo.get("git_url", "N/A")
+
         print(f"{'=' * 70}")
-        print(f"Mode: {'DRY RUN' if self.dry_run else 'EXECUTE'}")
-        print(f"Main library: {BASE_DIR}")
-        print(f"Nested repos: {len(self.nested_repos)}")
-        print()
+        print(f"Repository: {repo_path.name}")
+        print(f"  Git: {git_url}")
+        print(f"  Skills path: {skills_path}")
 
-        for repo in self.nested_repos:
-            repo_path = Path(repo["repo_path"])
-            skills_path = Path(repo["skills_path"])
-            git_url = repo.get("git_url", "N/A")
+        if not skills_path.exists():
+            print(f"  [SKIP] Skills path not found")
+            skipped.append({"repo": repo_path.name, "reason": "path not found"})
+            continue
 
-            print(f"{'=' * 70}")
-            print(f"Repository: {repo_path.name}")
-            print(f"  Git: {git_url}")
-            print(f"  Skills path: {skills_path}")
+        skills = [
+            p for p in skills_path.iterdir()
+            if p.is_dir() and (p / "SKILL.md").exists()
+        ]
+        print(f"  Skills to migrate: {len(skills)}")
 
-            if not skills_path.exists():
-                print(f"  [SKIP] Skills path not found")
-                self.skipped.append({"repo": repo_path.name, "reason": "path not found"})
-                continue
-
-            # Count skills
-            skills = [
-                p for p in skills_path.iterdir()
-                if p.is_dir() and (p / "SKILL.md").exists()
-            ]
-            print(f"  Skills to migrate: {len(skills)}")
-
-            if self.dry_run:
-                for skill in skills:
-                    # Gate runs even in dry-run (for visibility)
-                    if self.gate_mode != "skip":
-                        report = run_gates(skill)
-                        print(format_report(report), end="")
-                        if not report.gates_passed:
-                            print(f"    Gate failure. Use --no-gate to override.")
-                            print(f"    Skip {skill.name}.")
-                            self.gated_out.append({"skill": skill.name, "repo": repo_path.name})
-                            continue
-                    skill_path = BASE_DIR / skill.name
-                    if skill_path.exists():
-                        print(f"    [EXISTS] {skill.name}")
-                    else:
-                        print(f"    [WILL COPY] {skill.name}")
-                continue
-
-            # Execute migration
+        if dry_run:
             for skill in skills:
-                # Gate evaluation
-                if self.gate_mode != "skip":
+                if gate_mode != "skip":
                     report = run_gates(skill)
                     print(format_report(report), end="")
                     if not report.gates_passed:
                         print(f"    Gate failure. Use --no-gate to override.")
                         print(f"    Skip {skill.name}.")
-                        self.gated_out.append({"skill": skill.name, "repo": repo_path.name})
+                        gated_out.append({"skill": skill.name, "repo": repo_path.name})
                         continue
-
-                # User confirmation
-                if should_prompt_user(self.non_interactive):
-                    if not prompt_user_confirm(f"Migrate {skill.name}?"):
-                        print(f"    Skipped {skill.name}.")
-                        self.skipped.append({"skill": skill.name, "repo": repo_path.name, "reason": "user declined"})
-                        continue
-
-                target_path = BASE_DIR / skill.name
-
-                # Backup if exists
-                if target_path.exists():
-                    backup = create_backup(target_path, BASE_DIR, op_label="migrate")
-                    try:
-                        shutil.rmtree(target_path)
-                    except Exception as e:
-                        self.errors.append({
-                            "skill": skill.name,
-                            "error": f"Failed to remove existing: {e}"
-                        })
-                        continue
-
-                    # Copy skill
-                    try:
-                        shutil.copytree(skill, target_path, symlinks=False, dirs_exist_ok=False)
-                    except Exception as e:
-                        meta = keep_backup(backup, reason=str(e))
-                        print(f"[migrate] FAILED; backup retained at {meta['backup_path']}", file=sys.stderr)
-                        raise
-                    else:
-                        commit_backup(backup)
-                        print(f"[migrate] backup auto-removed")
+                skill_path = BASE_DIR / skill.name
+                if skill_path.exists():
+                    print(f"    [EXISTS] {skill.name}")
                 else:
-                    # Fresh install, no backup needed
+                    print(f"    [WILL COPY] {skill.name}")
+            continue
+
+        for skill in skills:
+            if gate_mode != "skip":
+                report = run_gates(skill)
+                print(format_report(report), end="")
+                if not report.gates_passed:
+                    print(f"    Gate failure. Use --no-gate to override.")
+                    print(f"    Skip {skill.name}.")
+                    gated_out.append({"skill": skill.name, "repo": repo_path.name})
+                    continue
+
+            if should_prompt_user(non_interactive):
+                if not prompt_user_confirm(f"Migrate {skill.name}?"):
+                    print(f"    Skipped {skill.name}.")
+                    skipped.append({"skill": skill.name, "repo": repo_path.name, "reason": "user declined"})
+                    continue
+
+            target_path = BASE_DIR / skill.name
+
+            if target_path.exists():
+                backup = create_backup(target_path, BASE_DIR, op_label="migrate")
+                try:
+                    shutil.rmtree(target_path)
+                except Exception as e:
+                    errors.append({
+                        "skill": skill.name,
+                        "error": f"Failed to remove existing: {e}"
+                    })
+                    continue
+
+                try:
                     shutil.copytree(skill, target_path, symlinks=False, dirs_exist_ok=False)
+                except Exception as e:
+                    meta = keep_backup(backup, reason=str(e))
+                    print(f"[migrate] FAILED; backup retained at {meta['backup_path']}", file=sys.stderr)
+                    raise
+                else:
+                    commit_backup(backup)
+                    print(f"[migrate] backup auto-removed")
+            else:
+                shutil.copytree(skill, target_path, symlinks=False, dirs_exist_ok=False)
 
-                self.migrated.append({
-                    "skill": skill.name,
-                    "source": str(skill),
-                    "target": str(target_path),
-                })
-                print(f"    [MIGRATED] {skill.name}")
+            migrated.append({
+                "skill": skill.name,
+                "source": str(skill),
+                "target": str(target_path),
+            })
+            print(f"    [MIGRATED] {skill.name}")
 
-        return self.get_results()
+    return get_results(migrated, skipped, gated_out, errors)
 
-    def get_results(self) -> dict:
-        """Get migration results."""
-        return {
-            "migrated": self.migrated,
-            "skipped": self.skipped,
-            "gated_out": self.gated_out,
-            "errors": self.errors,
-            "total_migrated": len(self.migrated),
-            "total_skipped": len(self.skipped),
-            "total_gated_out": len(self.gated_out),
-            "total_errors": len(self.errors),
-        }
 
+def get_results(migrated, skipped, gated_out, errors) -> dict:
+    """Get migration results."""
+    return {
+        "migrated": migrated,
+        "skipped": skipped,
+        "gated_out": gated_out,
+        "errors": errors,
+        "total_migrated": len(migrated),
+        "total_skipped": len(skipped),
+        "total_gated_out": len(gated_out),
+        "total_errors": len(errors),
+    }
 
 def main():
     parser = argparse.ArgumentParser(
@@ -221,12 +204,11 @@ def main():
     # Default to dry-run if neither execute nor dry-run specified
     dry_run = not args.execute
 
-    migrator = NestedRepoMigrator(
+    results = migrate_nested_repos(
         dry_run=dry_run,
         gate_mode="skip" if args.no_gate else args.gate_mode,
         non_interactive=args.non_interactive,
     )
-    results = migrator.migrate_all()
 
     # Print summary
     print(f"\n{'=' * 70}")
@@ -261,7 +243,6 @@ def main():
     if candidates > 0 and results["total_migrated"] == 0 and results["total_gated_out"] > 0:
         return 4
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

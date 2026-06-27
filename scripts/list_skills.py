@@ -20,16 +20,12 @@ import yaml
 from pathlib import Path
 from typing import Optional, List, Dict
 import argparse
+from _lib.paths import expand_path
+from _lib.paths import expand_path
 
 # Force UTF-8 encoding for stdout on Windows
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
-
-
-def expand_path(path_str: str) -> Path:
-    """Expand ~ and environment variables in path."""
-    return Path(os.path.expandvars(os.path.expanduser(path_str)))
-
 
 def parse_skill_md(skill_md_path: Path) -> Optional[dict]:
     """Parse SKILL.md frontmatter and content."""
@@ -59,7 +55,6 @@ def parse_skill_md(skill_md_path: Path) -> Optional[dict]:
     except Exception as e:
         return None
 
-
 def find_skill_md_files(root_path: Path) -> List[Path]:
     """Find all SKILL.md files under root_path."""
     skill_files = []
@@ -72,7 +67,6 @@ def find_skill_md_files(root_path: Path) -> List[Path]:
                 skill_files.append(skill_md)
 
     return skill_files
-
 
 def scan_directory(scan_path: Path) -> List[dict]:
     """Scan a directory for skills (fallback when no index)."""
@@ -99,7 +93,6 @@ def scan_directory(scan_path: Path) -> List[dict]:
         })
 
     return skills
-
 
 def list_from_index(index_path: Path, filter_name: Optional[str] = None) -> List[dict]:
     """
@@ -141,7 +134,6 @@ def list_from_index(index_path: Path, filter_name: Optional[str] = None) -> List
 
     return skills
 
-
 def format_skill_row(skill: dict, max_width: int = 100) -> str:
     """Format a skill as a table row."""
     name = skill["name"][:20].ljust(20)
@@ -157,7 +149,6 @@ def format_skill_row(skill: dict, max_width: int = 100) -> str:
     flag_str = f"[{','.join(flags)}]" if flags else ""
 
     return f"{name} | {version} | {scope} | {description} {flag_str}"
-
 
 # Category definitions for skill map
 CATEGORIES = {
@@ -198,7 +189,6 @@ CATEGORIES = {
     }
 }
 
-
 def classify_skill(skill: dict) -> str:
     """Classify a skill into a category based on name and description."""
     name = skill.get("name", "").lower()
@@ -210,7 +200,6 @@ def classify_skill(skill: dict) -> str:
                 return category
 
     return "其他"
-
 
 def print_skill_map(skills: List[dict]):
     """Print skills in ASCII skill map format."""
@@ -273,7 +262,6 @@ def print_skill_map(skills: List[dict]):
         print(f"{cat_info['icon']}={cat_info['description'][:4]}, ", end="")
     print(f"/ = 可直接调用")
 
-
 def print_skill_table(skills: List[dict]):
     """Print skills in table format."""
     header = f"{'Name':<20} | {'Ver':<8} | {'Scope':<10} | {'Description':<50}"
@@ -282,7 +270,6 @@ def print_skill_table(skills: List[dict]):
 
     for skill in sorted(skills, key=lambda s: s["name"]):
         print(format_skill_row(skill))
-
 
 def print_index_info(index_path: Path):
     """Print index file information."""
@@ -302,7 +289,6 @@ def print_index_info(index_path: Path):
 
     except Exception as e:
         print(f"Warning: Could not read index info: {e}")
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -369,7 +355,6 @@ def main():
     print("  python list_skills.py --index skillctl/index.json --filter lark")
     print("  python list_skills.py --path ~/.claude/skills")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -24,11 +24,12 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
+from _lib.paths import expand_path
+from _lib.paths import expand_path
 
 # Force UTF-8 encoding for stdout on Windows
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
-
 
 @dataclass
 class ValidationIssue:
@@ -42,7 +43,6 @@ class ValidationIssue:
     line_number: Optional[int] = None
     fix_suggestion: Optional[str] = None
 
-
 @dataclass
 class ValidationResult:
     """Result of validating a skill."""
@@ -52,7 +52,6 @@ class ValidationResult:
     issues: List[ValidationIssue] = field(default_factory=list)
     score: int = 100  # Governance score (100 = perfect)
     risk_level: str = "LOW"  # LOW, MEDIUM, HIGH, EXTREME
-
 
 # Required frontmatter fields
 REQUIRED_FIELDS = {
@@ -139,12 +138,6 @@ RISK_PATTERNS = {
 DESCRIPTION_MIN_LENGTH = 20
 DESCRIPTION_MAX_LENGTH = 300
 
-
-def expand_path(path_str: str) -> Path:
-    """Expand ~ and environment variables in path."""
-    return Path(os.path.expandvars(os.path.expanduser(path_str)))
-
-
 def parse_frontmatter(content: str) -> Tuple[Optional[Dict], Optional[str]]:
     """Parse YAML frontmatter from SKILL.md content."""
     parts = content.split("---")
@@ -156,7 +149,6 @@ def parse_frontmatter(content: str) -> Tuple[Optional[Dict], Optional[str]]:
         return frontmatter, None
     except yaml.YAMLError as e:
         return None, f"YAML parse error: {e}"
-
 
 def validate_frontmatter(
     frontmatter: Dict, skill_path: Path
@@ -261,7 +253,6 @@ def validate_frontmatter(
 
     return issues
 
-
 def check_security_issues(
     skill_path: Path, skill_name: str
 ) -> List[ValidationIssue]:
@@ -309,7 +300,6 @@ def check_security_issues(
 
     return issues
 
-
 def check_red_flags(
     skill_path: Path, skill_name: str
 ) -> List[ValidationIssue]:
@@ -355,7 +345,6 @@ def check_red_flags(
 
     return issues
 
-
 def classify_risk_level(issues: List[ValidationIssue]) -> str:
     """
     Classify risk level based on detected issues.
@@ -396,14 +385,12 @@ def classify_risk_level(issues: List[ValidationIssue]) -> str:
 
     return "LOW"
 
-
 RISK_LEVEL_EMOJI = {
     "LOW": "🟢",
     "MEDIUM": "🟡",
     "HIGH": "🔴",
     "EXTREME": "⛔",
 }
-
 
 def validate_skill(skill_path: Path) -> ValidationResult:
     """Validate a single skill."""
@@ -491,14 +478,12 @@ def validate_skill(skill_path: Path) -> ValidationResult:
         risk_level=risk_level,
     )
 
-
 def load_index(index_path: Path) -> Dict:
     """Load index.json."""
     if not index_path.exists():
         return {}
     with open(index_path, "r", encoding="utf-8") as f:
         return json.load(f)
-
 
 def validate_all(skills_dir: Path, skill_name: Optional[str] = None) -> List[ValidationResult]:
     """Validate all skills in a directory."""
@@ -522,7 +507,6 @@ def validate_all(skills_dir: Path, skill_name: Optional[str] = None) -> List[Val
         results.append(result)
 
     return results
-
 
 def print_results_table(results: List[ValidationResult], verbose: bool = False):
     """Print validation results in a formatted table."""
@@ -585,7 +569,6 @@ def print_results_table(results: List[ValidationResult], verbose: bool = False):
                 if i.fix_suggestion:
                     print(f"      Fix: {i.fix_suggestion}")
 
-
 def print_results_json(results: List[ValidationResult]):
     """Print results as JSON."""
     output = {
@@ -596,7 +579,6 @@ def print_results_json(results: List[ValidationResult]):
         "results": [asdict(r) for r in results],
     }
     print(json.dumps(output, indent=2, ensure_ascii=False))
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -642,7 +624,6 @@ def main():
     if any(not r.valid for r in results):
         return 1
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

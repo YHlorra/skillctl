@@ -29,16 +29,12 @@ from urllib.parse import quote_plus
 from _lib.tty import should_prompt_user
 from _lib.gates import run_gates, format_report
 from _lib.backup import create_backup, commit_backup, keep_backup
+from _lib.paths import expand_path, is_symlink, resolve_symlink_target
+from _lib.paths import expand_path, is_symlink, resolve_symlink_target
 
 # Force UTF-8 encoding for stdout on Windows
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
-
-
-def expand_path(path_str: str) -> Path:
-    """Expand ~ and environment variables in path."""
-    return Path(os.path.expandvars(os.path.expanduser(path_str)))
-
 
 def get_canonical_path(config_path: Path = None) -> Path:
     """
@@ -120,64 +116,6 @@ def get_canonical_path(config_path: Path = None) -> Path:
         "  See references/user-config.md for details."
     )
 
-
-def is_symlink(path: Path) -> bool:
-    r"""
-    Check if path is a symlink, junction point, or has a symlink in its parent chain.
-
-    A path like <agent_skills_dir>/<wrapper>/skills/<skill>
-    is effectively a symlink if any ancestor in its parent chain is a symlink.
-    """
-    try:
-        # First check if the path itself is a symlink
-        if path.is_symlink():
-            return True
-
-        # Check parent chain - if any parent is a symlink, this path is also "under" a symlink
-        current = path.parent
-        while current != current.parent:  # Walk up to root
-            try:
-                if current.is_symlink():
-                    return True
-                # On Windows, also check for junction points
-                if os.name == 'nt':
-                    try:
-                        resolved = current.resolve()
-                        if resolved != current and current.is_dir():
-                            return True
-                    except (OSError, RuntimeError):
-                        pass
-            except OSError:
-                break
-            current = current.parent
-
-        # On Windows, check if the path itself is a junction
-        if os.name == 'nt':
-            try:
-                resolved = path.resolve()
-                if resolved != path and path.is_dir():
-                    return True
-            except (OSError, RuntimeError):
-                pass
-
-        return False
-    except OSError:
-        return False
-
-
-def resolve_symlink_target(path: Path) -> Path:
-    r"""
-    Resolve symlink, junction, or regular path to real path.
-    ALWAYS resolves to get the true physical path, even for non-symlink paths.
-    This ensures that paths like E:\Skills\ljg-skills\skills\ljg-card
-    resolve correctly even when ljg-card itself is not a symlink.
-    """
-    try:
-        return path.resolve()
-    except OSError:
-        return path
-
-
 def hash_skill_files(skills: list) -> str:
     """
     Compute a hash of all skill file paths and modification times.
@@ -197,7 +135,6 @@ def hash_skill_files(skills: list) -> str:
     hash_parts.sort()
     combined = "|".join(hash_parts)
     return hashlib.md5(combined.encode("utf-8")).hexdigest()[:12]
-
 
 def get_git_info(skill_dir: Path) -> dict:
     """Get git information for a skill directory.
@@ -294,7 +231,6 @@ def get_git_info(skill_dir: Path) -> dict:
 
     return result
 
-
 def get_repo_info(url: str) -> dict:
     """Fetch GitHub repo info via git ls-remote."""
     clean_url = url.rstrip("/")
@@ -322,14 +258,12 @@ def get_repo_info(url: str) -> dict:
         "latest_hash": latest_hash,
     }
 
-
 # ─── GitHub API (gated behind --enrich flag) ──────────────────────────────
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_HEADERS = {"Accept": "application/vnd.github.v3+json"}
 if GITHUB_TOKEN:
     GITHUB_HEADERS["Authorization"] = f"token {GITHUB_TOKEN}"
-
 
 def github_api_get(url, params=None):
     """GET request to GitHub API with rate limit handling."""
@@ -351,7 +285,6 @@ def github_api_get(url, params=None):
     except Exception:
         return None, 0, 0
 
-
 def wait_for_rate_limit(reset_ts):
     """Wait if rate limited."""
     if reset_ts > 0:
@@ -359,7 +292,6 @@ def wait_for_rate_limit(reset_ts):
         if wait_sec > 0:
             print(f"[Rate limited] Waiting {int(wait_sec) + 5}s...", file=sys.stderr)
             time.sleep(wait_sec + 5)
-
 
 # Known patterns: (skill_prefix, search_query_suffix, confidence)
 KNOWN_PATTERNS = [
@@ -375,7 +307,6 @@ PREFIX_ORG_MAP = {
     "money": None,
     "yao": "yao",
 }
-
 
 def infer_github_url(skill_name, skill_dir, rate_remaining, rate_reset):
     """
@@ -440,7 +371,6 @@ def infer_github_url(skill_name, skill_dir, rate_remaining, rate_reset):
     else:
         return None, "rate_limited", 0
 
-
 def parse_skill_md(skill_md_path: Path) -> Optional[dict]:
     """Parse SKILL.md frontmatter and content."""
     try:
@@ -475,7 +405,6 @@ def parse_skill_md(skill_md_path: Path) -> Optional[dict]:
     except Exception as e:
         print(f"Warning: Failed to parse {skill_md_path}: {e}", file=sys.stderr)
         return None
-
 
 def find_skill_md_files(root_path: Path, auto_detect_nested: bool = True) -> List[Path]:
     """
@@ -539,7 +468,6 @@ def find_skill_md_files(root_path: Path, auto_detect_nested: bool = True) -> Lis
 
     return skill_files
 
-
 def detect_git_repos_with_skills(root_path: Path) -> List[dict]:
     """
     Auto-detect Git repos that have skills subdirectories.
@@ -574,7 +502,6 @@ def detect_git_repos_with_skills(root_path: Path) -> List[dict]:
             )
 
     return repos
-
 
 def scan_directory(
     scan_path: Path,
@@ -632,7 +559,6 @@ def scan_directory(
         skills.append(skill_entry)
 
     return skills
-
 
 def build_index(
     scan_configs: list, output_path: Path = None, auto_detect_nested: bool = True
@@ -798,7 +724,6 @@ def build_index(
     }
 
     return index
-
 
 def install_from_github(
     repo_url: str,
@@ -995,7 +920,6 @@ def install_from_github(
         print(f"Install failed: {e}", file=sys.stderr)
         return 1
 
-
 class DateTimeEncoder(json.JSONEncoder):
     """Custom JSON encoder that handles datetime and date objects."""
 
@@ -1006,7 +930,6 @@ class DateTimeEncoder(json.JSONEncoder):
             return obj.isoformat()
         return super().default(obj)
 
-
 def save_index(index: dict, output_path: Path):
     """Save index to JSON file."""
     with open(output_path, "w", encoding="utf-8") as f:
@@ -1016,12 +939,10 @@ def save_index(index: dict, output_path: Path):
         f"Total: {index['stats']['total_skills']} skills, {index['stats']['duplicates']} duplicates"
     )
 
-
 def load_config(config_path: Path) -> dict:
     """Load scan configuration from YAML file."""
     with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -1224,7 +1145,6 @@ def main():
             print(f"  - {dup['name']}: {len(dup['instances'])} instances")
 
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

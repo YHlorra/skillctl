@@ -29,12 +29,8 @@ from pathlib import Path
 from _lib.backup import create_backup, commit_backup, keep_backup
 from _lib.gates import run_gates, format_report
 from _lib.tty import should_prompt_user, prompt_user_confirm
-
-
-def expand_path(path_str: str) -> Path:
-    """Expand ~ and environment variables in path."""
-    return Path(os.path.expandvars(os.path.expanduser(path_str)))
-
+from _lib.paths import expand_path
+from _lib.paths import expand_path
 
 def resolve_library_path() -> Path:
     """
@@ -67,7 +63,6 @@ def resolve_library_path() -> Path:
         "  See references/user-config.md for details."
     )
 
-
 def resolve_source_path(source_arg: str | None) -> Path:
     """Resolve the source directory to scan for unmanaged skills."""
     if source_arg:
@@ -76,7 +71,6 @@ def resolve_source_path(source_arg: str | None) -> Path:
             sys.exit(f"Error: source directory does not exist: {path}")
         return path
     return expand_path("~/.claude/skills")
-
 
 def create_junction(link_path: Path, target_path: Path) -> tuple[bool, str]:
     """
@@ -113,7 +107,6 @@ def create_junction(link_path: Path, target_path: Path) -> tuple[bool, str]:
         print(f"  Error creating junction/symlink: {e}")
         return False, str(e)
 
-
 def is_junction(path: Path) -> bool:
     """Check if path is a junction point (Windows)."""
     if sys.platform != "win32":
@@ -122,7 +115,6 @@ def is_junction(path: Path) -> bool:
         return path.is_symlink()
     except OSError:
         return False
-
 
 def get_managed_skill_names(library_path: Path) -> set[str]:
     """Read index.json and return set of already-managed skill names."""
@@ -135,7 +127,6 @@ def get_managed_skill_names(library_path: Path) -> set[str]:
         return set(skills.keys())
     except (json.JSONDecodeError, OSError):
         return set()
-
 
 def copy_skill_files(src_skill_dir: Path, dst_skill_dir: Path) -> bool:
     """
@@ -151,7 +142,6 @@ def copy_skill_files(src_skill_dir: Path, dst_skill_dir: Path) -> bool:
     except Exception as e:
         print(f"  Error copying skill: {e}")
         return False
-
 
 def adopt_skill(
     src_skill_dir: Path,
@@ -206,7 +196,6 @@ def adopt_skill(
         print("[adopt] backup auto-removed")
 
     return "adopted", "ok"
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -387,7 +376,6 @@ def main():
     if len(to_adopt) > 0 and adopted == 0 and gated_out == len(to_adopt):
         return 4
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

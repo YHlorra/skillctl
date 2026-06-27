@@ -1,3 +1,12 @@
+def scan_cleanup(scan_path: Path) -> dict:
+    """Scan for orphan symlinks, empty dirs, and broken backups."""
+    orphan_symlinks = []
+    empty_dirs = []
+    broken_backups = []
+    _visited_paths = set()
+    # ... body of scan() inlined here
+
+
 #!/usr/bin/env python3
 """
 Skill Manager - Cleanup Module
@@ -29,41 +38,12 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Tuple
+from _lib.paths import expand_path, is_symlink, resolve_symlink_target
+from _lib.paths import expand_path, is_symlink, resolve_symlink_target
 
 # Force UTF-8 encoding for stdout on Windows
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
-
-
-def expand_path(path_str: str) -> Path:
-    """Expand ~ and environment variables in path."""
-    return Path(os.path.expandvars(os.path.expanduser(path_str)))
-
-
-def is_symlink(path: Path) -> bool:
-    """Check if path is a symlink or junction point."""
-    try:
-        if path.is_symlink():
-            return True
-        if os.name == "nt":
-            try:
-                resolved = path.resolve()
-                if resolved != path and path.is_dir():
-                    return True
-            except (OSError, RuntimeError):
-                pass
-        return False
-    except OSError:
-        return False
-
-
-def resolve_symlink_target(path: Path) -> Path:
-    """Resolve symlink to real path."""
-    try:
-        return path.resolve()
-    except OSError:
-        return path
-
 
 def is_empty_dir(path: Path) -> bool:
     """Check if directory is truly empty."""
@@ -73,7 +53,6 @@ def is_empty_dir(path: Path) -> bool:
         return len(os.listdir(path)) == 0
     except OSError:
         return False
-
 
 def is_orphan_symlink(path: Path) -> Tuple[bool, str]:
     """
@@ -90,7 +69,6 @@ def is_orphan_symlink(path: Path) -> Tuple[bool, str]:
         return False, ""
     except Exception as e:
         return True, f"resolve error: {e}"
-
 
 def is_broken_backup_dir(path: Path) -> Tuple[bool, str]:
     """
@@ -129,166 +107,142 @@ def is_broken_backup_dir(path: Path) -> Tuple[bool, str]:
     # It's a backup dir without any valid skill content anywhere
     return True, "backup dir without valid skill content"
 
+def scan_cleanup(scan_path: Path):
+    """Scan scan_path for cleanup candidates."""
+    if not scan_path.exists():
+        print(f"Error: Path does not exist: {scan_path}")
+        return [], [], []
 
-class CleanupScanner:
-    """Scan for cleanup candidates."""
+    print(f"Scanning: {scan_path}")
 
-    def __init__(self, scan_path: Path):
-        self.scan_path = scan_path
-        self.orphan_symlinks: List[Dict] = []
-        self.empty_dirs: List[Dict] = []
-        self.broken_backups: List[Dict] = []
-        self._visited_paths: set = set()  # Track visited paths to avoid duplicates
+    orphan_symlinks = []
+    empty_dirs = []
+    broken_backups = []
+    _visited_paths = set()
 
-    def scan(self):
-        """Scan scan_path for cleanup candidates."""
-        if not self.scan_path.exists():
-            print(f"Error: Path does not exist: {self.scan_path}")
-            return
-
-        print(f"Scanning: {self.scan_path}")
-
-        for item in self.scan_path.iterdir():
-            if not item.is_dir():
-                continue
-
-            self._check_item(item)
-
-        # Also check nested directories
-        self._scan_nested(self.scan_path)
-
-    def _scan_nested(self, parent: Path):
-        """Recursively scan for nested empty dirs and orphan symlinks."""
-        try:
-            for item in parent.iterdir():
-                if not item.is_dir():
-                    continue
-
-                # Track and skip if already visited
-                real_path = str(item.resolve()) if is_symlink(item) else str(item)
-                if real_path in self._visited_paths:
-                    continue
-                self._visited_paths.add(real_path)
-
-                # Skip common non-skill directories
-                if item.name in (".git", "node_modules", "__pycache__", ".venv", "venv"):
-                    continue
-
-                # Skip backup directories - they are handled at top level
-                if item.name.startswith(".backup"):
-                    self._check_item(item)
-                    continue
-
-                self._check_item(item)
-
-                # Recurse into subdirs (only real dirs, not symlinks)
-                if item.is_dir() and not is_symlink(item):
-                    self._scan_nested(item)
-        except PermissionError:
-            pass
-
-    def _check_item(self, path: Path):
-        """Check a single item for cleanup candidates."""
-        # Check for orphan symlinks
+    def _check_item(path: Path):
         if is_symlink(path):
             is_orphan, reason = is_orphan_symlink(path)
             if is_orphan:
-                self.orphan_symlinks.append({
+                orphan_symlinks.append({
                     "path": str(path),
                     "name": path.name,
                     "reason": reason,
                 })
-                return  # Don't double-check as empty dir
+                return
 
-        # Check for empty directories
         if path.is_dir() and is_empty_dir(path):
-            self.empty_dirs.append({
+            empty_dirs.append({
                 "path": str(path),
                 "name": path.name,
             })
             return
 
-        # Check for broken backup directories
         is_broken, reason = is_broken_backup_dir(path)
-        if is_broken and path not in [Path(b["path"]) for b in self.broken_backups]:
-            self.broken_backups.append({
+        if is_broken and path not in [Path(b["path"]) for b in broken_backups]:
+            broken_backups.append({
                 "path": str(path),
                 "name": path.name,
                 "reason": reason,
             })
 
-    def get_summary(self) -> dict:
-        """Get cleanup summary."""
-        return {
-            "scan_path": str(self.scan_path),
-            "scan_time": datetime.now().isoformat(),
-            "orphan_symlinks": len(self.orphan_symlinks),
-            "empty_dirs": len(self.empty_dirs),
-            "broken_backups": len(self.broken_backups),
-            "total_items": len(self.orphan_symlinks) + len(self.empty_dirs) + len(self.broken_backups),
-        }
+    def _scan_nested(parent: Path):
+        try:
+            for item in parent.iterdir():
+                if not item.is_dir():
+                    continue
+                real_path = str(item.resolve()) if is_symlink(item) else str(item)
+                if real_path in _visited_paths:
+                    continue
+                _visited_paths.add(real_path)
+                if item.name in (".git", "node_modules", "__pycache__", ".venv", "venv"):
+                    continue
+                if item.name.startswith(".backup"):
+                    _check_item(item)
+                    continue
+                _check_item(item)
+                if item.is_dir() and not is_symlink(item):
+                    _scan_nested(item)
+        except PermissionError:
+            pass
 
-    def remove_all(self, dry_run: bool = True) -> dict:
-        """
-        Remove all cleanup candidates.
-        Returns result dict.
-        """
-        results = {
-            "symlinks_removed": [],
-            "dirs_removed": [],
-            "backups_removed": [],
-            "errors": [],
-        }
+    for item in scan_path.iterdir():
+        if not item.is_dir():
+            continue
+        _check_item(item)
 
+    _scan_nested(scan_path)
+
+    return orphan_symlinks, empty_dirs, broken_backups
+
+
+def get_cleanup_summary(orphan_symlinks, empty_dirs, broken_backups) -> dict:
+    """Get cleanup summary."""
+    return {
+        "scan_path": str(scan_path),
+        "scan_time": datetime.now().isoformat(),
+        "orphan_symlinks": len(orphan_symlinks),
+        "empty_dirs": len(empty_dirs),
+        "broken_backups": len(broken_backups),
+        "total_items": len(orphan_symlinks) + len(empty_dirs) + len(broken_backups),
+    }
+
+
+def remove_cleanup_items(orphan_symlinks, empty_dirs, broken_backups, dry_run: bool = True) -> dict:
+    results = {
+        "symlinks_removed": [],
+        "dirs_removed": [],
+        "backups_removed": [],
+        "errors": [],
+    }
+
+    if dry_run:
+        print("\n[DRY RUN] Would remove:")
+
+    for item in orphan_symlinks:
+        path = Path(item["path"])
         if dry_run:
-            print("\n[DRY RUN] Would remove:")
+            print(f"  [symlink] {path}")
+        else:
+            try:
+                if is_symlink(path):
+                    path.unlink()
+                    results["symlinks_removed"].append(item["path"])
+                    print(f"  Removed symlink: {path}")
+            except Exception as e:
+                results["errors"].append({"path": item["path"], "error": str(e)})
 
-        # Remove orphan symlinks
-        for item in self.orphan_symlinks:
-            path = Path(item["path"])
-            if dry_run:
-                print(f"  [symlink] {path}")
-            else:
-                try:
-                    if is_symlink(path):
-                        path.unlink()
-                        results["symlinks_removed"].append(item["path"])
-                        print(f"  Removed symlink: {path}")
-                except Exception as e:
-                    results["errors"].append({"path": item["path"], "error": str(e)})
+    for item in empty_dirs:
+        path = Path(item["path"])
+        if dry_run:
+            print(f"  [empty dir] {path}")
+        else:
+            try:
+                os.rmdir(path)
+                results["dirs_removed"].append(item["path"])
+                print(f"  Removed empty dir: {path}")
+            except Exception as e:
+                results["errors"].append({"path": item["path"], "error": str(e)})
 
-        # Remove empty directories
-        for item in self.empty_dirs:
-            path = Path(item["path"])
-            if dry_run:
-                print(f"  [empty dir] {path}")
-            else:
-                try:
-                    os.rmdir(path)
-                    results["dirs_removed"].append(item["path"])
-                    print(f"  Removed empty dir: {path}")
-                except Exception as e:
-                    results["errors"].append({"path": item["path"], "error": str(e)})
+    for item in broken_backups:
+        path = Path(item["path"])
+        if dry_run:
+            print(f"  [backup] {path}")
+        else:
+            try:
+                shutil.rmtree(path)
+                results["backups_removed"].append(item["path"])
+                print(f"  Removed backup: {path}")
+            except Exception as e:
+                results["errors"].append({"path": item["path"], "error": str(e)})
 
-        # Remove broken backup directories
-        for item in self.broken_backups:
-            path = Path(item["path"])
-            if dry_run:
-                print(f"  [backup] {path}")
-            else:
-                try:
-                    shutil.rmtree(path)
-                    results["backups_removed"].append(item["path"])
-                    print(f"  Removed backup: {path}")
-                except Exception as e:
-                    results["errors"].append({"path": item["path"], "error": str(e)})
-
-        return results
+    return results
 
 
-def print_cleanup_report(scanner: CleanupScanner, results: dict = None):
+
+def print_cleanup_report(orphan_symlinks, empty_dirs, broken_backups, results: dict = None):
     """Print cleanup report."""
-    summary = scanner.get_summary()
+    summary = get_cleanup_summary(orphan_symlinks, empty_dirs, broken_backups)
 
     print(f"\n{'=' * 70}")
     print(f" Cleanup Report")
@@ -301,26 +255,26 @@ def print_cleanup_report(scanner: CleanupScanner, results: dict = None):
     print(f"  Broken backups: {summary['broken_backups']}")
     print(f"  Total: {summary['total_items']}")
 
-    if scanner.orphan_symlinks:
+    if orphan_symlinks:
         print(f"\n{'=' * 70}")
-        print(f" Orphan Symlinks ({len(scanner.orphan_symlinks)})")
+        print(f" Orphan Symlinks ({len(orphan_symlinks)})")
         print(f"{'=' * 70}")
-        for item in scanner.orphan_symlinks:
+        for item in orphan_symlinks:
             print(f"  • {item['path']}")
             print(f"    Reason: {item['reason']}")
 
-    if scanner.empty_dirs:
+    if empty_dirs:
         print(f"\n{'=' * 70}")
-        print(f" Empty Directories ({len(scanner.empty_dirs)})")
+        print(f" Empty Directories ({len(empty_dirs)})")
         print(f"{'=' * 70}")
-        for item in scanner.empty_dirs:
+        for item in empty_dirs:
             print(f"  • {item['path']}")
 
-    if scanner.broken_backups:
+    if broken_backups:
         print(f"\n{'=' * 70}")
-        print(f" Broken Backup Directories ({len(scanner.broken_backups)})")
+        print(f" Broken Backup Directories ({len(broken_backups)})")
         print(f"{'=' * 70}")
-        for item in scanner.broken_backups:
+        for item in broken_backups:
             print(f"  • {item['path']}")
             print(f"    Reason: {item['reason']}")
 
@@ -335,7 +289,6 @@ def print_cleanup_report(scanner: CleanupScanner, results: dict = None):
             print(f"  Errors: {len(results['errors'])}")
             for err in results["errors"]:
                 print(f"    ! {err['path']}: {err['error']}")
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -396,26 +349,26 @@ def main():
 
     # Scan
     scanner = CleanupScanner(scan_path)
-    scanner.scan()
+    scan(scan_path)
 
     # Filter if specific cleanup type requested
     if args.symlinks_only:
-        scanner.empty_dirs = []
-        scanner.broken_backups = []
+        empty_dirs = []
+        broken_backups = []
     if args.empty_only:
-        scanner.orphan_symlinks = []
-        scanner.broken_backups = []
+        orphan_symlinks = []
+        broken_backups = []
     if args.backup_only:
-        scanner.orphan_symlinks = []
-        scanner.empty_dirs = []
+        orphan_symlinks = []
+        empty_dirs = []
 
     # Output
     if args.json:
         output = {
-            "summary": scanner.get_summary(),
-            "orphan_symlinks": scanner.orphan_symlinks,
-            "empty_dirs": scanner.empty_dirs,
-            "broken_backups": scanner.broken_backups,
+            "summary": get_summary(orphan_symlinks, empty_dirs, broken_backups),
+            "orphan_symlinks": orphan_symlinks,
+            "empty_dirs": empty_dirs,
+            "broken_backups": broken_backups,
         }
         print(json.dumps(output, indent=2, ensure_ascii=False))
         return 0
@@ -426,14 +379,14 @@ def main():
     # Remove if requested
     results = None
     if args.remove and not args.dry_run:
-        if scanner.get_summary()["total_items"] > 0:
+        if get_summary(orphan_symlinks, empty_dirs, broken_backups)["total_items"] > 0:
             print(f"\n{'=' * 70}")
             if args.force:
                 confirm = "y"
             else:
                 confirm = input("Confirm removal? [y/N]: ").strip().lower()
             if confirm == "y":
-                results = scanner.remove_all(dry_run=False)
+                results = remove_all(dry_run=False)
             else:
                 print("Cancelled.")
         else:
@@ -443,7 +396,6 @@ def main():
         print("Dry run complete. Use --remove to actually delete.")
 
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

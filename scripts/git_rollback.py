@@ -14,24 +14,15 @@ import subprocess
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict
+from _lib.paths import expand_path, is_symlink, resolve_symlink_target, is_git_repo
 
 # Force UTF-8 encoding for stdout on Windows
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-
 def expand_path(path_str: str) -> Path:
     """Expand ~ and environment variables in path."""
     return Path(os.path.expandvars(os.path.expanduser(path_str)))
-
-
-def is_symlink(path: Path) -> bool:
-    """Check if path is a symlink."""
-    try:
-        return path.is_symlink()
-    except OSError:
-        return False
-
 
 def resolve_symlink_target(path: Path) -> Path:
     """Resolve symlink to real path."""
@@ -39,12 +30,6 @@ def resolve_symlink_target(path: Path) -> Path:
         return path.resolve()
     except OSError:
         return path
-
-
-def is_git_repo(path: Path) -> bool:
-    """Check if path is a git repository."""
-    return (path / ".git").exists()
-
 
 def get_git_log(path: Path, max_count: int = 20) -> List[Dict]:
     """Get git log for a repository."""
@@ -86,7 +71,6 @@ def get_git_log(path: Path, max_count: int = 20) -> List[Dict]:
         print(f"Error getting git log: {e}")
         return []
 
-
 def get_git_branches(path: Path) -> List[str]:
     """Get all branches in a repository."""
     try:
@@ -102,7 +86,6 @@ def get_git_branches(path: Path) -> List[str]:
         pass
     return []
 
-
 def get_current_commit(path: Path) -> Optional[str]:
     """Get current commit hash."""
     try:
@@ -117,7 +100,6 @@ def get_current_commit(path: Path) -> Optional[str]:
     except Exception:
         pass
     return None
-
 
 def git_checkout(path: Path, commit_hash: str, create_backup: bool = True) -> bool:
     """Checkout a specific commit, optionally creating backup first."""
@@ -172,7 +154,6 @@ def git_checkout(path: Path, commit_hash: str, create_backup: bool = True) -> bo
         print(f"Error during checkout: {e}")
         return False
 
-
 def git_revert(path: Path, commit_hash: str) -> bool:
     """Revert to a specific commit without losing history."""
     try:
@@ -199,7 +180,6 @@ def git_revert(path: Path, commit_hash: str) -> bool:
         print(f"Error during revert: {e}")
         return False
 
-
 def git_reset_hard(path: Path, commit_hash: str, create_backup: bool = True) -> bool:
     """Hard reset to a specific commit."""
     try:
@@ -222,7 +202,6 @@ def git_reset_hard(path: Path, commit_hash: str, create_backup: bool = True) -> 
         print(f"Error during reset: {e}")
         return False
 
-
 def find_skill_path(skill_name: str, search_paths: List[Path]) -> Optional[Path]:
     """Find a skill directory by name in search paths."""
     for search_path in search_paths:
@@ -233,122 +212,91 @@ def find_skill_path(skill_name: str, search_paths: List[Path]) -> Optional[Path]
             return skill_path
     return None
 
+def get_commits(skill_path: Path, max_count: int = 20) -> List[Dict]:
+    """Get commit history."""
+    if not is_git_repo(skill_path):
+        return []
+    return get_git_log(skill_path, max_count)
 
-class GitRollbacker:
-    """Handles git rollback for skills."""
+def get_current_hash(skill_path: Path) -> Optional[str]:
+    """Get current commit hash."""
+    return get_current_commit(skill_path)
 
-    def __init__(
-        self, skill_path: Path = None, skill_name: str = None, index_path: Path = None
-    ):
-        self.skill_name = skill_name
-        self.index_path = index_path
-        self.skill_path = None
-
-        if skill_path:
-            self.skill_path = expand_path(str(skill_path))
-            if is_symlink(self.skill_path):
-                self.skill_path = resolve_symlink_target(self.skill_path)
-        elif skill_name and index_path:
-            # Find from index
-            with open(index_path, "r", encoding="utf-8") as f:
-                index = json.load(f)
-            skill_data = index["skills"].get(skill_name)
-            if skill_data:
-                for loc in skill_data["locations"]:
-                    if not loc["is_symlink"]:
-                        self.skill_path = expand_path(loc["path"])
-                        break
-
-        if not self.skill_path:
-            raise ValueError(f"Could not find skill path for: {skill_name}")
-
-    def get_commits(self, max_count: int = 20) -> List[Dict]:
-        """Get commit history."""
-        if not is_git_repo(self.skill_path):
-            return []
-        return get_git_log(self.skill_path, max_count)
-
-    def get_current_hash(self) -> Optional[str]:
-        """Get current commit hash."""
-        return get_current_commit(self.skill_path)
-
-    def rollback(self, commit_hash: str, mode: str = "checkout") -> bool:
-        """Rollback to specified commit."""
-        if not is_git_repo(self.skill_path):
-            print(f"Error: {self.skill_path} is not a git repository")
-            return False
-
-        if mode == "checkout":
-            return git_checkout(self.skill_path, commit_hash)
-        elif mode == "revert":
-            return git_revert(self.skill_path, commit_hash)
-        elif mode == "reset":
-            return git_reset_hard(self.skill_path, commit_hash)
-        else:
-            print(f"Unknown rollback mode: {mode}")
-            return False
-
-    def interactive_rollback(self) -> bool:
-        """Interactively select a commit to rollback to."""
-        commits = self.get_commits()
-        current_hash = self.get_current_hash()
-
-        if not commits:
-            print("No commits found or not a git repository")
-            return False
-
-        print(f"\n{'=' * 70}")
-        print(f"Git History: {self.skill_path.name}")
-        print(f"Current: {current_hash[:8] if current_hash else 'unknown'}")
-        print(f"{'=' * 70}")
-        print(f"{'#':<4} {'Hash':<10} {'Date':<26} {'Author':<16} Message")
-        print("-" * 70)
-
-        for i, commit in enumerate(commits, 1):
-            marker = (
-                "→ "
-                if commit["hash"][:8] == (current_hash[:8] if current_hash else "")
-                else "  "
-            )
-            date_short = commit["date"][:19]  # Truncate timestamp
-            msg = (
-                commit["message"][:40] + "..."
-                if len(commit["message"]) > 40
-                else commit["message"]
-            )
-            print(
-                f"{marker}{i:<4} {commit['short_hash']:<10} {date_short:<26} {commit['author']:<16} {msg}"
-            )
-
-        print("-" * 70)
-        print("[R] Rollback to selected commit")
-        print("[Q] Quit without changes")
-
-        choice = input("\nSelect commit number to rollback (or R/Q): ").strip().upper()
-
-        if choice == "Q":
-            print("Cancelled")
-            return False
-        elif choice == "R":
-            # Ask for number
-            num = input("Enter commit number: ").strip()
-            if num.isdigit() and 1 <= int(num) <= len(commits):
-                commit = commits[int(num) - 1]
-                return self.rollback(commit["hash"], mode="checkout")
-        elif choice.isdigit() and 1 <= int(choice) <= len(commits):
-            commit = commits[int(choice) - 1]
-            confirm = (
-                input(
-                    f"Rollback to {commit['short_hash']} - {commit['message'][:50]}? [y/N]: "
-                )
-                .strip()
-                .lower()
-            )
-            if confirm == "y":
-                return self.rollback(commit["hash"], mode="checkout")
-
+def rollback(skill_path: Path, commit_hash: str, mode: str = "checkout") -> bool:
+    """Rollback to specified commit."""
+    if not is_git_repo(skill_path):
+        print(f"Error: {skill_path} is not a git repository")
         return False
 
+    if mode == "checkout":
+        return git_checkout(skill_path, commit_hash)
+    elif mode == "revert":
+        return git_revert(skill_path, commit_hash)
+    elif mode == "reset":
+        return git_reset_hard(skill_path, commit_hash)
+    else:
+        print(f"Unknown rollback mode: {mode}")
+        return False
+
+def interactive_rollback(skill_path: Path) -> bool:
+    """Interactively select a commit to rollback to."""
+    commits = get_commits(skill_path)
+    current_hash = get_current_hash(skill_path)
+
+    if not commits:
+        print("No commits found or not a git repository")
+        return False
+
+    print(f"\n{'=' * 70}")
+    print(f"Git History: {skill_path.name}")
+    print(f"Current: {current_hash[:8] if current_hash else 'unknown'}")
+    print(f"{'=' * 70}")
+    print(f"{'#':<4} {'Hash':<10} {'Date':<26} {'Author':<16} Message")
+    print("-" * 70)
+
+    for i, commit in enumerate(commits, 1):
+        marker = (
+            "→ "
+            if commit["hash"][:8] == (current_hash[:8] if current_hash else "")
+            else "  "
+        )
+        date_short = commit["date"][:19]
+        msg = (
+            commit["message"][:40] + "..."
+            if len(commit["message"]) > 40
+            else commit["message"]
+        )
+        print(
+            f"{marker}{i:<4} {commit['short_hash']:<10} {date_short:<26} {commit['author']:<16} {msg}"
+        )
+
+    print("-" * 70)
+    print("[R] Rollback to selected commit")
+    print("[Q] Quit without changes")
+
+    choice = input("\nSelect commit number to rollback (or R/Q): ").strip().upper()
+
+    if choice == "Q":
+        print("Cancelled")
+        return False
+    elif choice == "R":
+        num = input("Enter commit number: ").strip()
+        if num.isdigit() and 1 <= int(num) <= len(commits):
+            commit = commits[int(num) - 1]
+            return rollback(commit["hash"], mode="checkout")
+    elif choice.isdigit() and 1 <= int(choice) <= len(commits):
+        commit = commits[int(choice) - 1]
+        confirm = (
+            input(
+                f"Rollback to {commit['short_hash']} - {commit['message'][:50]}? [y/N]: "
+            )
+            .strip()
+            .lower()
+        )
+        if confirm == "y":
+            return rollback(commit["hash"], mode="checkout")
+
+    return False
 
 def main():
     parser = argparse.ArgumentParser(description="Git rollback for skills")
@@ -423,15 +371,15 @@ def main():
 
     if args.interactive or (not args.commit and not args.list):
         # Interactive mode
-        success = rollbacker.interactive_rollback()
+        success = interactive_rollback(skill_path)
         if success:
             print("Rollback completed successfully")
         return 0 if success else 1
 
     elif args.list:
         # List commits
-        commits = rollbacker.get_commits()
-        current = rollbacker.get_current_hash()
+        commits = get_commits(skill_path)
+        current = get_current_hash(skill_path)
         print(f"\nGit History: {skill_path.name}")
         print(f"Current: {current[:8] if current else 'unknown'}")
         print("-" * 60)
@@ -444,13 +392,12 @@ def main():
     elif args.commit:
         # Rollback to specific commit
         print(f"Rolling back {skill_path.name} to {args.commit}")
-        success = rollbacker.rollback(args.commit, mode=args.mode)
+        success = rollback(skill_path, args.commit, mode=args.mode)
         if success:
             print("Rollback completed successfully")
         return 0 if success else 1
 
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

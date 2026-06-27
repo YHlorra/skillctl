@@ -1,3 +1,9 @@
+def load_index(index_path: Path) -> dict:
+    """Load index.json."""
+    with open(index_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 #!/usr/bin/env python3
 """
 Skill Manager - Deduplicate Module
@@ -14,32 +20,11 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict
+from _lib.paths import expand_path, is_symlink, resolve_symlink_target
 
 # Force UTF-8 encoding for stdout on Windows
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
-
-
-def expand_path(path_str: str) -> Path:
-    """Expand ~ and environment variables in path."""
-    return Path(os.path.expandvars(os.path.expanduser(path_str)))
-
-
-def is_symlink(path: Path) -> bool:
-    """Check if path is a symlink."""
-    try:
-        return path.is_symlink()
-    except OSError:
-        return False
-
-
-def resolve_symlink_target(path: Path) -> Path:
-    """Resolve symlink to real path."""
-    try:
-        return path.resolve()
-    except OSError:
-        return path
-
 
 def get_git_modified_time(path: Path) -> Optional[datetime]:
     """Get last modified time from git log for a directory."""
@@ -58,24 +43,12 @@ def get_git_modified_time(path: Path) -> Optional[datetime]:
         pass
     return None
 
-
 def get_dir_modified_time(path: Path) -> datetime:
     """Get directory last modified time."""
     try:
         return datetime.fromtimestamp(path.stat().st_mtime)
     except Exception:
         return datetime.min
-
-
-class Deduplicator:
-    """Handles skill deduplication with conflict resolution."""
-
-    def __init__(self, index_path: Path):
-        self.index_path = index_path
-        with open(index_path, 'r', encoding='utf-8') as f:
-            self.index = json.load(f)
-        self.decisions = {}
-        self.resolved = []
 
     def analyze_conflict(self, dup_entry: dict) -> dict:
         """Analyze a duplicate entry and provide details for resolution."""
@@ -84,7 +57,7 @@ class Deduplicator:
         real_instances = dup_entry.get('real_instances', [])
 
         # Get skill info
-        skill = self.index['skills'].get(name)
+        skill = index['skills'].get(name)
         if not skill:
             return {'error': f'Skill {name} not found in index'}
 
@@ -232,7 +205,7 @@ class Deduplicator:
 
     def resolve_all(self, strategy: str = 'ask') -> dict:
         """Resolve all duplicates based on strategy."""
-        duplicates = self.index.get('duplicates', [])
+        duplicates = index.get('duplicates', [])
 
         if not duplicates:
             print("No duplicates found.")
@@ -241,7 +214,7 @@ class Deduplicator:
         print(f"\nFound {len(duplicates)} duplicate(s)/conflict(s)")
 
         for dup in duplicates:
-            analysis = self.analyze_conflict(dup)
+            analysis = analyze_conflict(dup)
 
             if 'error' in analysis:
                 print(f"Error analyzing {dup['name']}: {analysis['error']}")
@@ -250,10 +223,10 @@ class Deduplicator:
             decision = None
 
             if strategy == 'global':
-                decision = self.resolve_global_local(analysis)
+                decision = resolve_global_local(analysis)
                 reason = 'global_scope_preference'
             elif strategy == 'local':
-                decision = self.resolve_local_first(analysis)
+                decision = resolve_local_first(analysis)
                 reason = 'local_scope_preference'
             elif strategy == 'newest':
                 if analysis['suggestion']:
@@ -263,45 +236,45 @@ class Deduplicator:
                     decision = analysis['locations'][0]['path']
                     reason = 'first_available'
             elif strategy == 'canonical':
-                decision = self.resolve_canonical(analysis)
+                decision = resolve_canonical(analysis)
                 reason = 'canonical_path_preference'
             else:  # 'ask'
-                decision = self.interactive_resolve(analysis)
+                decision = interactive_resolve(analysis)
                 reason = 'user_choice'
 
             if decision:
-                self.decisions[dup['name']] = {
+                decisions[dup['name']] = {
                     'keep': decision,
                     'reason': reason,
                     'resolved_at': datetime.now().isoformat()
                 }
-                self.resolved.append(dup['name'])
+                resolved.append(dup['name'])
 
                 # Find paths to remove
                 all_paths = set(loc['path'] for loc in analysis['locations'])
                 all_paths.discard(decision)
-                self.decisions[dup['name']]['remove'] = list(all_paths)
+                decisions[dup['name']]['remove'] = list(all_paths)
 
                 print(f"\n  → Keeping: {decision}")
             else:
                 print(f"\n  → Skipped (user quit)")
 
         return {
-            'decisions': self.decisions,
-            'resolved': self.resolved,
-            'skipped': len(duplicates) - len(self.resolved)
+            'decisions': decisions,
+            'resolved': resolved,
+            'skipped': len(duplicates) - len(resolved)
         }
 
     def save_decisions(self, output_path: Path = None, strategy: str = 'ask'):
         """Save resolution decisions to file."""
-        output = output_path or Path(str(self.index_path).replace('.json', '_decisions.json'))
+        output = output_path or Path(str(index_path).replace('.json', '_decisions.json'))
 
         decisions_output = {
             'generated_at': datetime.now().isoformat(),
             'strategy_used': strategy,
-            'total_duplicates': len(self.index.get('duplicates', [])),
-            'resolved_count': len(self.resolved),
-            'decisions': self.decisions
+            'total_duplicates': len(index.get('duplicates', [])),
+            'resolved_count': len(resolved),
+            'decisions': decisions
         }
 
         with open(output, 'w', encoding='utf-8') as f:
@@ -310,12 +283,10 @@ class Deduplicator:
         print(f"\nDecisions saved to: {output}")
         return output
 
-
 def load_decisions(decisions_path: Path) -> dict:
     """Load previously saved decisions."""
     with open(decisions_path, 'r', encoding='utf-8') as f:
         return json.load(f)
-
 
 def main():
     parser = argparse.ArgumentParser(description='Resolve skill duplicates')
@@ -361,7 +332,6 @@ def main():
         print("\nDry run - no changes saved")
 
     return 0
-
 
 if __name__ == '__main__':
     sys.exit(main())

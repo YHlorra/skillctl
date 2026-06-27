@@ -1,3 +1,18 @@
+def load_index(index_path: Path) -> dict:
+    """Load index.json."""
+    with open(index_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_decisions(decisions_path: Path | None) -> tuple[dict, dict | None]:
+    """Load decisions.json if provided."""
+    if decisions_path and decisions_path.exists():
+        with open(decisions_path, "r", encoding="utf-8") as f:
+            decisions_data = json.load(f)
+        return decisions_data.get("decisions", {}), decisions_data
+    return {}, None
+
+
 #!/usr/bin/env python3
 """
 Skill Manager - Collect and Link Module
@@ -17,32 +32,12 @@ from typing import Optional, Dict, List
 import subprocess
 
 from _lib import backup
+from _lib.paths import expand_path, is_symlink, resolve_symlink_target, is_git_repo
+from _lib.paths import expand_path, is_symlink, resolve_symlink_target, is_git_repo
 
 # Force UTF-8 encoding for stdout on Windows
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
-
-
-def expand_path(path_str: str) -> Path:
-    """Expand ~ and environment variables in path."""
-    return Path(os.path.expandvars(os.path.expanduser(path_str)))
-
-
-def is_symlink(path: Path) -> bool:
-    """Check if path is a symlink."""
-    try:
-        return path.is_symlink()
-    except OSError:
-        return False
-
-
-def resolve_symlink_target(path: Path) -> Path:
-    """Resolve symlink to real path."""
-    try:
-        return path.resolve()
-    except OSError:
-        return path
-
 
 def remove_symlink(path: Path) -> bool:
     """Remove a symlink (works on both Windows and Unix)."""
@@ -57,7 +52,6 @@ def remove_symlink(path: Path) -> bool:
     except Exception as e:
         print(f"  Error removing symlink {path}: {e}")
     return False
-
 
 def create_symlink(source: Path, link: Path) -> bool:
     """Create a symlink from link to source."""
@@ -100,7 +94,6 @@ def create_symlink(source: Path, link: Path) -> bool:
         print(f"  Error creating symlink: {e}")
         return False
 
-
 def copy_skill(source: Path, target: Path, preserve_git: bool = True) -> bool:
     """Copy a skill directory to target location."""
     try:
@@ -134,48 +127,16 @@ def copy_skill(source: Path, target: Path, preserve_git: bool = True) -> bool:
         print(f"  Error copying skill: {e}")
         return False
 
-
-def is_git_repo(path: Path) -> bool:
-    """Check if a directory is a git repository."""
-    return (path / ".git").exists()
-
-
-class SkillCollector:
-    """Handles skill collection and symlink creation."""
-
-    def __init__(self, index_path: Path, decisions_path: Path = None):
-        self.index_path = index_path
-        self.decisions_path = decisions_path
-
-        with open(index_path, "r", encoding="utf-8") as f:
-            self.index = json.load(f)
-
-        if decisions_path and decisions_path.exists():
-            with open(decisions_path, "r", encoding="utf-8") as f:
-                self.decisions_data = json.load(f)
-            self.decisions = self.decisions_data.get("decisions", {})
-        else:
-            self.decisions = {}
-            self.decisions_data = None
-
-        self.results = {
-            "collected": [],
-            "symlinks_created": [],
-            "symlinks_removed": [],
-            "errors": [],
-        }
-
-    def collect_skill(
-        self, skill_name: str, target_dir: Path, create_symlinks: bool = True, dry_run: bool = False
+def collect_skill(skill_name: str, target_dir: Path, create_symlinks: bool = True, dry_run: bool = False
     ) -> bool:
         """Collect a single skill to target directory."""
-        skill = self.index["skills"].get(skill_name)
+        skill = index["skills"].get(skill_name)
         if not skill:
             print(f"Skill '{skill_name}' not found in index")
             return False
 
         # Get decision if exists
-        decision = self.decisions.get(skill_name, {})
+        decision = decisions.get(skill_name, {})
         keep_path = decision.get("keep")
         remove_paths = decision.get("remove", [])
 
@@ -195,7 +156,7 @@ class SkillCollector:
         if not source_path or not source_path.exists():
             if not dry_run:
                 print(f"Source path not found: {source_path}")
-                self.results["errors"].append(
+                results["errors"].append(
                     {"skill": skill_name, "error": f"Source not found: {source_path}"}
                 )
             return False
@@ -245,7 +206,7 @@ class SkillCollector:
         if is_git_repo(source_path):
             if create_symlink(source_path, target_skill_dir):
                 print(f"  Linked (git repo): {target_skill_dir} -> {source_path}")
-                self.results["symlinks_created"].append(str(target_skill_dir))
+                results["symlinks_created"].append(str(target_skill_dir))
                 return True
 
         if dry_run:
@@ -259,7 +220,7 @@ class SkillCollector:
         if not success:
             return False
 
-        self.results["collected"].append(skill_name)
+        results["collected"].append(skill_name)
 
         # Handle symlinks for removed paths
         if create_symlinks:
@@ -271,7 +232,7 @@ class SkillCollector:
                 # If the removed path is a symlink, just remove it
                 if is_symlink(remove_expanded):
                     if remove_symlink(remove_expanded):
-                        self.results["symlinks_removed"].append(str(remove_expanded))
+                        results["symlinks_removed"].append(str(remove_expanded))
                 else:
                     # It's a real directory, convert to symlink
                     # Derive library_path for _lib.backup (same heuristic as above)
@@ -289,7 +250,7 @@ class SkillCollector:
                             remove_expanded.unlink()
 
                         if create_symlink(target_skill_dir, remove_expanded):
-                            self.results["symlinks_created"].append(str(remove_expanded))
+                            results["symlinks_created"].append(str(remove_expanded))
                             backup.commit_backup(backup_path)
                             print(f"[link] backup auto-removed")
                     else:
@@ -299,12 +260,11 @@ class SkillCollector:
                         else:
                             remove_expanded.unlink()
                         if create_symlink(target_skill_dir, remove_expanded):
-                            self.results["symlinks_created"].append(str(remove_expanded))
+                            results["symlinks_created"].append(str(remove_expanded))
 
         return True
 
-    def collect_all(
-        self, target_dir: Path, skills: List[str] = None, create_symlinks: bool = True, dry_run: bool = False
+def collect_all(target_dir: Path, skills: List[str] = None, create_symlinks: bool = True, dry_run: bool = False
     ) -> dict:
         """Collect all skills or specified skills to target directory."""
         target_dir = expand_path(str(target_dir))
@@ -313,22 +273,21 @@ class SkillCollector:
             skill_names = skills
         else:
             # Collect all skills from index
-            skill_names = list(self.index["skills"].keys())
+            skill_names = list(index["skills"].keys())
 
         print(f"\nCollecting {len(skill_names)} skills to: {target_dir}")
         print("=" * 60)
 
         for skill_name in skill_names:
             print(f"\nProcessing: {skill_name}")
-            self.collect_skill(skill_name, target_dir, create_symlinks, dry_run=dry_run)
+            collect_skill(skill_name, target_dir, create_symlinks, dry_run=dry_run)
 
-        return self.results
+        return results
 
-    def create_single_symlink(
-        self, skill_name: str, link_path: Path, target_path: Path = None
+def create_single_symlink(skill_name: str, link_path: Path, target_path: Path = None
     ) -> bool:
         """Create a symlink for a single skill."""
-        skill = self.index["skills"].get(skill_name)
+        skill = index["skills"].get(skill_name)
         if not skill:
             print(f"Skill '{skill_name}' not found in index")
             return False
@@ -349,7 +308,6 @@ class SkillCollector:
             target_path = resolve_symlink_target(target_path)
 
         return create_symlink(target_path, link_path)
-
 
 def main():
     parser = argparse.ArgumentParser(description="Collect skills and create symlinks")
@@ -393,11 +351,12 @@ def main():
 
     decisions_path = Path(args.decisions) if args.decisions else None
 
-    collector = SkillCollector(index_path, decisions_path)
+    index = load_index(index_path)
+    decisions, _ = load_decisions(decisions_path)
 
     # Collect (dry_run flag controls per-skill output, argparse dry-run is handled separately)
-    results = collector.collect_all(
-        target_dir=args.target, skills=args.skills, create_symlinks=not args.no_symlink, dry_run=args.dry_run
+    results = collect_all(
+        index, decisions, target_dir=args.target, skills=args.skills, create_symlinks=not args.no_symlink, dry_run=args.dry_run
     )
 
     if args.dry_run:
@@ -436,7 +395,6 @@ def main():
             print(f"  ! {err['skill']}: {err['error']}")
 
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

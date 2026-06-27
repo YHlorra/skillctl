@@ -28,6 +28,8 @@ if hasattr(sys.stdout, "reconfigure"):
 # Base paths — resolved at import time from env > user.json.
 # Never hardcode a path: each operator's library is different.
 from user_config import resolve_library_path
+from _lib.paths import expand_path
+from _lib.paths import expand_path
 _BASE_DIR_RESOLVED = resolve_library_path()
 if _BASE_DIR_RESOLVED is None:
     raise SystemExit(
@@ -37,7 +39,6 @@ if _BASE_DIR_RESOLVED is None:
 BASE_DIR = _BASE_DIR_RESOLVED
 SCORE_HISTORY_FILE = BASE_DIR / ".skillctl" / "score_history.json"
 
-
 @dataclass
 class ScoreEntry:
     """A single score entry for a skill."""
@@ -45,7 +46,6 @@ class ScoreEntry:
     score: int
     dimensions: Dict[str, int] = field(default_factory=dict)
     note: str = ""
-
 
 @dataclass
 class SkillScoreHistory:
@@ -82,12 +82,6 @@ class SkillScoreHistory:
             return "regression"
         return "stable"
 
-
-def expand_path(path_str: str) -> Path:
-    """Expand ~ and environment variables in path."""
-    return Path(os.path.expandvars(os.path.expanduser(path_str)))
-
-
 def load_score_history() -> Dict[str, SkillScoreHistory]:
     """Load score history from JSON file."""
     SCORE_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -107,7 +101,6 @@ def load_score_history() -> Dict[str, SkillScoreHistory]:
     except Exception as e:
         print(f"Warning: Failed to load score history: {e}")
         return {}
-
 
 def save_score_history(history: Dict[str, SkillScoreHistory]):
     """Save score history to JSON file."""
@@ -130,7 +123,6 @@ def save_score_history(history: Dict[str, SkillScoreHistory]):
 
     with open(SCORE_HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
-
 
 def get_latest_scores_from_reports() -> Dict[str, Dict]:
     """Get latest scores from score reports if they exist."""
@@ -164,7 +156,6 @@ def get_latest_scores_from_reports() -> Dict[str, Dict]:
 
     return scores
 
-
 def parse_score_from_skill_md(skill_path: Path) -> Optional[Dict]:
     """Try to parse score from skill's own data."""
     skill_md = skill_path / "SKILL.md"
@@ -184,7 +175,6 @@ def parse_score_from_skill_md(skill_path: Path) -> Optional[Dict]:
         pass
 
     return None
-
 
 def record_scores():
     """Record current scores for all skills."""
@@ -254,7 +244,6 @@ def record_scores():
 
     return 0
 
-
 def show_trend(skill_name: str):
     """Show score trend for a specific skill."""
     history = load_score_history()
@@ -302,7 +291,6 @@ def show_trend(skill_name: str):
 
     return 0
 
-
 def show_regressions():
     """Show all skills with score regressions."""
     history = load_score_history()
@@ -336,7 +324,6 @@ def show_regressions():
         print(f"  python score_history.py --trend {sh.skill_name}")
 
     return 1
-
 
 def show_report():
     """Show full score history report."""
@@ -397,7 +384,6 @@ def show_report():
 
     return 0
 
-
 def main():
     parser = argparse.ArgumentParser(
         description="Skill Manager - Score History Tracking"
@@ -437,7 +423,6 @@ def main():
         return show_report()
 
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

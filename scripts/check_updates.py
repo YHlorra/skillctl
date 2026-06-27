@@ -21,11 +21,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, asdict
+from _lib.paths import expand_path
+from _lib.paths import expand_path
 
 # Force UTF-8 encoding for stdout on Windows
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
-
 
 @dataclass
 class UpdateInfo:
@@ -38,12 +39,6 @@ class UpdateInfo:
     commits_behind: int
     has_update: bool
     remote_url: str
-
-
-def expand_path(path_str: str) -> Path:
-    """Expand ~ and environment variables in path."""
-    return Path(os.path.expandvars(os.path.expanduser(path_str)))
-
 
 def get_remote_hash(git_url: str, branch: str = "HEAD", timeout: int = 30) -> Optional[str]:
     """Get the hash of a remote branch using git ls-remote."""
@@ -62,7 +57,6 @@ def get_remote_hash(git_url: str, branch: str = "HEAD", timeout: int = 30) -> Op
     except Exception:
         pass
     return None
-
 
 def get_remote_info(git_url: str, timeout: int = 30) -> Dict[str, Optional[str]]:
     """Get all remote branch hashes."""
@@ -100,7 +94,6 @@ def get_remote_info(git_url: str, timeout: int = 30) -> Dict[str, Optional[str]]
         pass
 
     return info
-
 
 def check_skill_update(skill_data: Dict, index_path: Path) -> UpdateInfo:
     """Check if a skill has updates available."""
@@ -194,7 +187,6 @@ def check_skill_update(skill_data: Dict, index_path: Path) -> UpdateInfo:
         remote_url=remote_url,
     )
 
-
 def load_index(index_path: Path) -> Dict:
     """Load index.json."""
     if not index_path.exists():
@@ -203,7 +195,6 @@ def load_index(index_path: Path) -> Dict:
 
     with open(index_path, "r", encoding="utf-8") as f:
         return json.load(f)
-
 
 def check_all_updates(
     index_path: Path,
@@ -241,7 +232,6 @@ def check_all_updates(
 
     return updates
 
-
 def print_updates_table(updates: List[UpdateInfo], show_all: bool = False):
     """Print updates in a formatted table."""
     # Filter
@@ -276,7 +266,6 @@ def print_updates_table(updates: List[UpdateInfo], show_all: bool = False):
     print("\nTo update a skill, use:")
     print("  python git_rollback.py --skill <name> --interactive")
 
-
 def print_updates_json(updates: List[UpdateInfo]):
     """Print updates as JSON."""
     output = {
@@ -286,7 +275,6 @@ def print_updates_json(updates: List[UpdateInfo]):
         "skills": [asdict(u) for u in updates],
     }
     print(json.dumps(output, indent=2, ensure_ascii=False))
-
 
 def update_wrapper_repos(
     library_root: Path,
@@ -403,7 +391,6 @@ def update_wrapper_repos(
 
     return summary
 
-
 def print_repos_summary(summary: dict):
     """Pretty-print the result of update_wrapper_repos."""
     print(f"\n{'=' * 70}")
@@ -439,7 +426,6 @@ def print_repos_summary(summary: dict):
             if len(err) > 200:
                 err = err[:197] + "..."
             print(f"  - {item['repo']}: {err}")
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -564,7 +550,6 @@ def main():
     if any(u.has_update for u in updates):
         return 1  # Has updates available
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())
